@@ -1,0 +1,1203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BOOMCRAFT — every block is a coin flip</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { width:100%; height:100%; overflow:hidden; background:#79b4ff; }
+  body { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; color:#fff; user-select:none; -webkit-user-select:none; }
+  canvas { display:block; width:100%; height:100%; image-rendering: pixelated; }
+
+  #hud { position:fixed; inset:0; pointer-events:none; }
+
+  /* crosshair */
+  #cross { position:absolute; left:50%; top:50%; width:22px; height:22px; margin:-11px 0 0 -11px;
+           opacity:.85; transition:transform .08s ease; }
+  #cross::before, #cross::after { content:""; position:absolute; background:#fff; box-shadow:0 0 0 1px rgba(0,0,0,.55); }
+  #cross::before { left:50%; top:0; width:2px; height:100%; margin-left:-1px; }
+  #cross::after { top:50%; left:0; height:2px; width:100%; margin-top:-1px; }
+  #cross.hot { transform:scale(1.35) rotate(45deg); }
+
+  /* hearts */
+  #hearts { position:absolute; left:50%; bottom:86px; transform:translateX(-50%);
+            display:flex; gap:3px; font-size:22px; line-height:1; text-shadow:2px 2px 0 rgba(0,0,0,.6); }
+  .heart { color:#ff3b3b; }
+  .heart.half { color:#ff3b3b; opacity:.45; }
+  .heart.empty { color:#3a1010; }
+
+  /* hotbar */
+  #hotbar { position:absolute; left:50%; bottom:18px; transform:translateX(-50%);
+            display:flex; gap:4px; padding:4px; background:rgba(0,0,0,.45); border:2px solid rgba(0,0,0,.6); border-radius:4px; }
+  .slot { width:52px; height:52px; position:relative; background:rgba(255,255,255,.10);
+          border:2px solid rgba(255,255,255,.18); border-radius:3px; display:flex; align-items:center; justify-content:center; }
+  .slot.sel { border-color:#fff; background:rgba(255,255,255,.28); box-shadow:0 0 0 2px rgba(0,0,0,.5) inset; }
+  .slot canvas { width:34px; height:34px; }
+  .slot .n { position:absolute; right:2px; bottom:0px; font-size:12px; font-weight:bold; text-shadow:2px 2px 0 #000; }
+  .slot .k { position:absolute; left:3px; top:1px; font-size:9px; opacity:.55; }
+  .slot.zero { opacity:.35; }
+
+  /* stats */
+  #stats { position:absolute; left:14px; top:12px; font-size:13px; line-height:1.55;
+           text-shadow:2px 2px 0 rgba(0,0,0,.65); background:rgba(0,0,0,.28); padding:8px 12px; border-radius:6px; }
+  #stats b { color:#ffd84d; }
+  #streak { color:#7dff9b; }
+
+  /* toast */
+  #toasts { position:absolute; left:50%; top:22%; transform:translateX(-50%); text-align:center; width:520px; }
+  .toast { font-size:26px; font-weight:bold; letter-spacing:1px; text-shadow:3px 3px 0 rgba(0,0,0,.7);
+           animation: pop 1.2s ease forwards; }
+  @keyframes pop { 0%{ transform:scale(.6); opacity:0 } 15%{ transform:scale(1.12); opacity:1 }
+                   30%{ transform:scale(1) } 70%{ opacity:1 } 100%{ transform:translateY(-26px); opacity:0 } }
+
+  /* flashes */
+  #flash { position:absolute; inset:0; background:radial-gradient(ellipse at center, transparent 35%, rgba(255,0,0,.85) 100%);
+           opacity:0; transition:opacity .35s ease; }
+  #boomflash { position:absolute; inset:0; background:#fff3c4; opacity:0; }
+
+  /* overlays */
+  .overlay { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center;
+             background:rgba(8,14,26,.82); pointer-events:auto; text-align:center; padding:24px; }
+  .overlay.hidden { display:none; }
+  .title { font-size:clamp(38px, 8vw, 76px); font-weight:900; letter-spacing:4px; line-height:1;
+           color:#ffcf3d; text-shadow: 0 5px 0 #a4460b, 0 9px 22px rgba(0,0,0,.6); }
+  .sub { margin-top:10px; font-size:15px; opacity:.85; max-width:560px; line-height:1.6; }
+  .keys { margin-top:22px; display:grid; grid-template-columns:auto auto; gap:6px 16px; font-size:13px; opacity:.8; }
+  .keys span:nth-child(odd){ color:#7fd0ff; text-align:right; }
+  .btn { margin-top:26px; pointer-events:auto; cursor:pointer; font-family:inherit; font-size:18px; font-weight:bold;
+         padding:14px 34px; color:#22160a; background:#ffcf3d; border:none; border-bottom:5px solid #a4460b; border-radius:6px; }
+  .btn:hover { background:#ffe07a; }
+  #deadOverlay .title { color:#ff5a4d; text-shadow:0 5px 0 #6b0f0f, 0 9px 22px rgba(0,0,0,.6); }
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+
+<div id="hud">
+  <div id="stats">
+    mined <b id="sMined">0</b> · booms <b id="sBooms">0</b><br>
+    safe streak <span id="streak">0</span> · best <span id="sBest">0</span><br>
+    <span id="lootLine" style="opacity:.75">coal 0 · iron 0 · <span style="color:#7ff0f7">diamond 0</span></span><br>
+    <span style="opacity:.6">every block: 50% BOOM</span>
+  </div>
+  <div id="cross"></div>
+  <div id="toasts"></div>
+  <div id="hearts"></div>
+  <div id="hotbar"></div>
+  <div id="flash"></div>
+  <div id="boomflash"></div>
+
+  <div class="overlay" id="startOverlay">
+    <div class="title">BOOMCRAFT</div>
+    <div class="sub">A blocky world where mining is a gamble. Every single block you break has a
+      <b style="color:#ff9f43">50% chance to detonate</b> instead of dropping. Dig carefully. Or don't.</div>
+    <div class="keys">
+      <span>WASD</span><span>move</span>
+      <span>Mouse</span><span>look</span>
+      <span>Left click</span><span>MINE (coin flip!)</span>
+      <span>Right click</span><span>place block</span>
+      <span>Space</span><span>jump</span>
+      <span>1-9 / scroll</span><span>pick block</span>
+      <span>Space x2 / F</span><span>fly (again = you drop)</span>
+      <span>Esc</span><span>pause</span>
+    </div>
+    <button class="btn" id="startBtn">CLICK TO PLAY</button>
+  </div>
+
+  <div class="overlay hidden" id="pauseOverlay">
+    <div class="title" style="font-size:44px">PAUSED</div>
+    <div class="sub">Your world is still here. Nothing has exploded while you were away.</div>
+    <button class="btn" id="resumeBtn">BACK IN</button>
+  </div>
+
+  <div class="overlay hidden" id="deadOverlay">
+    <div class="title">KABOOM</div>
+    <div class="sub" id="deathMsg">You gambled one block too many.</div>
+    <button class="btn" id="respawnBtn">RESPAWN</button>
+  </div>
+</div>
+
+<script>
+"use strict";
+// ============================================================================
+//  BOOMCRAFT — a tiny voxel game with a 50% chance of regret.
+//  Hand-rolled WebGL. No libraries. No CDN. One file.
+// ============================================================================
+
+// ---------------------------------------------------------------- blocks ---
+const AIR=0, GRASS=1, DIRT=2, STONE=3, SAND=4, LOG=5, LEAVES=6, PLANKS=7,
+      COAL=8, IRON=9, DIAMOND=10, BEDROCK=11, COBBLE=12, GRAVEL=13, TNT=14;
+
+// tiles: [top, bottom, side] indices into the 4x4 texture atlas
+const BLOCKS = {
+  [GRASS]:  { name:"Grass",   tiles:[0,2,1],    color:[0.36,0.62,0.24] },
+  [DIRT]:   { name:"Dirt",    tiles:[2,2,2],    color:[0.55,0.42,0.28] },
+  [STONE]:  { name:"Stone",   tiles:[3,3,3],    color:[0.54,0.54,0.54] },
+  [SAND]:   { name:"Sand",    tiles:[4,4,4],    color:[0.87,0.82,0.63] },
+  [LOG]:    { name:"Log",     tiles:[6,6,5],    color:[0.42,0.31,0.16] },
+  [LEAVES]: { name:"Leaves",  tiles:[7,7,7],    color:[0.25,0.55,0.20] },
+  [PLANKS]: { name:"Planks",  tiles:[8,8,8],    color:[0.71,0.55,0.32] },
+  [COAL]:   { name:"Coal",    tiles:[9,9,9],    color:[0.30,0.30,0.30] },
+  [IRON]:   { name:"Iron",    tiles:[10,10,10], color:[0.78,0.64,0.48] },
+  [DIAMOND]:{ name:"Diamond", tiles:[11,11,11], color:[0.42,0.85,0.88] },
+  [BEDROCK]:{ name:"Bedrock", tiles:[12,12,12], color:[0.16,0.16,0.18] },
+  [COBBLE]: { name:"Cobble",  tiles:[13,13,13], color:[0.48,0.48,0.48] },
+  [GRAVEL]: { name:"Gravel",  tiles:[14,14,14], color:[0.55,0.52,0.50] },
+  [TNT]:    { name:"TNT",     tiles:[15,15,15], color:[0.85,0.20,0.15] },
+};
+const isSolid = b => b !== AIR;
+
+// ---------------------------------------------------------------- world ----
+const WX=80, WY=52, WZ=80;          // world size in blocks
+const CH=16;                         // chunk width/depth
+const CX=Math.ceil(WX/CH), CZ=Math.ceil(WZ/CH);
+const world = new Uint8Array(WX*WY*WZ);
+const vidx = (x,y,z) => (y*WZ + z)*WX + x;
+
+function getBlock(x,y,z){
+  if (y<0) return BEDROCK;
+  if (y>=WY || x<0 || x>=WX || z<0 || z>=WZ) return AIR;
+  return world[vidx(x,y,z)];
+}
+function setBlock(x,y,z,b){
+  if (x<0||x>=WX||y<0||y>=WY||z<0||z>=WZ) return;
+  world[vidx(x,y,z)] = b;
+  dirtyAround(x,z);
+}
+// outside the map horizontally = invisible wall, so nobody walks into the void
+function isBlocking(x,y,z){
+  if (x<0||x>=WX||z<0||z>=WZ) return true;
+  if (y<0) return true;
+  if (y>=WY) return false;
+  return world[vidx(x,y,z)] !== AIR;
+}
+
+// ------------------------------------------------------------- generation --
+let seed = 1337;
+function rnd(){ seed = (seed*1664525 + 1013904223) & 0x7fffffff; return seed/0x7fffffff; }
+function hash2(x,z){
+  let h = x*374761393 + z*668265263;
+  h = (h ^ (h>>13)) * 1274126177;
+  return ((h ^ (h>>16)) & 0x7fffffff) / 0x7fffffff;
+}
+function smooth(t){ return t*t*(3-2*t); }
+function valueNoise(x,z){
+  const xi=Math.floor(x), zi=Math.floor(z), xf=smooth(x-xi), zf=smooth(z-zi);
+  const a=hash2(xi,zi), b=hash2(xi+1,zi), c=hash2(xi,zi+1), d=hash2(xi+1,zi+1);
+  return (a*(1-xf)+b*xf)*(1-zf) + (c*(1-xf)+d*xf)*zf;
+}
+function fbm(x,z){
+  let v=0, amp=1, f=1, norm=0;
+  for (let i=0;i<4;i++){ v += valueNoise(x*f, z*f)*amp; norm+=amp; amp*=0.5; f*=2; }
+  return v/norm;
+}
+
+const SEA = 18;
+function generateWorld(){
+  world.fill(AIR);
+  for (let x=0;x<WX;x++){
+    for (let z=0;z<WZ;z++){
+      const n = fbm(x*0.035+10.5, z*0.035+4.5);
+      const hills = fbm(x*0.011, z*0.011);
+      let h = Math.floor(SEA + 2 + n*13 + hills*10);
+      if (h < 3) h = 3;
+      if (h > WY-8) h = WY-8;
+      // low ground and patchy dunes get sand instead of grass
+      const beach = h <= SEA+2 || fbm(x*0.02+70.5, z*0.02+31.5) > 0.665;
+      for (let y=0;y<=h;y++){
+        let b;
+        if (y===0) b = BEDROCK;
+        else if (y===h) b = beach ? SAND : GRASS;
+        else if (y > h-4) b = beach ? SAND : DIRT;
+        else {
+          b = STONE;
+          const r = rnd();
+          if (y < h-6){
+            if (r < 0.014) b = COAL;
+            else if (r < 0.022) b = IRON;
+            else if (r < 0.0245 && y < 14) b = DIAMOND;
+            else if (r < 0.032) b = GRAVEL;
+            else if (r < 0.0345) b = TNT;   // buried dynamite. surprise!
+          }
+        }
+        world[vidx(x,y,z)] = b;
+      }
+      // caves, so there is something worth blowing into
+      for (let y=2;y<h-2;y++){
+        const c = fbm(x*0.09+y*0.13, z*0.09-y*0.07);
+        if (c > 0.66 && y < h-3) world[vidx(x,y,z)] = AIR;
+      }
+      // trees
+      if (!beach && rnd() < 0.012 && x>2 && z>2 && x<WX-3 && z<WZ-3 &&
+          world[vidx(x,h,z)] === GRASS){
+        const th = 4 + Math.floor(rnd()*3);
+        for (let y=h+1;y<=h+th;y++) world[vidx(x,y,z)] = LOG;
+        for (let dx=-2;dx<=2;dx++) for (let dz=-2;dz<=2;dz++) for (let dy=th-2;dy<=th+1;dy++){
+          const r = Math.abs(dx)+Math.abs(dz)+Math.max(0,dy-th);
+          if (r > 3) continue;
+          if (dx===0&&dz===0&&dy<=th) continue;
+          const px=x+dx, py=h+dy, pz=z+dz;
+          if (px<0||px>=WX||pz<0||pz>=WZ||py>=WY) continue;
+          if (world[vidx(px,py,pz)] === AIR) world[vidx(px,py,pz)] = LEAVES;
+        }
+      }
+    }
+  }
+}
+
+// ------------------------------------------------------------- texture -----
+// Procedural 4x4 atlas of 32px tiles, drawn once into a canvas.
+const TILE=32, ATLAS=TILE*4;
+function buildAtlas(){
+  const c = document.createElement("canvas");
+  c.width = c.height = ATLAS;
+  const g = c.getContext("2d");
+  const px = (t,x,y,col)=>{ g.fillStyle=col; g.fillRect((t%4)*TILE+x, Math.floor(t/4)*TILE+y, 1, 1); };
+  const rect = (t,x,y,w,h,col)=>{ g.fillStyle=col; g.fillRect((t%4)*TILE+x, Math.floor(t/4)*TILE+y, w, h); };
+  const noisy = (t, r,gr,b, amt)=>{
+    for (let y=0;y<TILE;y++) for (let x=0;x<TILE;x++){
+      const n = (Math.random()-0.5)*amt;
+      px(t,x,y, `rgb(${(r+n)|0},${(gr+n)|0},${(b+n)|0})`);
+    }
+  };
+  const blobs = (t, col, count, size)=>{
+    for (let i=0;i<count;i++){
+      const bx=2+Math.random()*(TILE-6), by=2+Math.random()*(TILE-6);
+      for (let y=0;y<size;y++) for (let x=0;x<size;x++){
+        if (Math.random()<0.35) continue;
+        px(t, (bx+x)|0, (by+y)|0, col);
+      }
+    }
+  };
+  // 0 grass top
+  noisy(0, 96,150,64, 36);
+  for (let i=0;i<70;i++) px(0, (Math.random()*TILE)|0, (Math.random()*TILE)|0, "rgba(60,120,40,.9)");
+  // 1 grass side
+  noisy(1, 140,105,70, 34);
+  for (let x=0;x<TILE;x++){
+    const edge = 6 + ((Math.random()*3)|0);
+    rect(1, x, 0, 1, edge, "rgb(96,150,64)");
+    px(1, x, edge, "rgb(76,124,52)");
+  }
+  // 2 dirt
+  noisy(2, 140,105,70, 38);
+  // 3 stone
+  noisy(3, 136,136,140, 26);
+  blobs(3, "rgba(112,112,118,.8)", 5, 5);
+  // 4 sand
+  noisy(4, 224,212,160, 22);
+  // 5 log side
+  noisy(5, 110,82,46, 22);
+  for (let x=0;x<TILE;x+=4) rect(5, x, 0, 1, TILE, "rgba(78,56,30,.75)");
+  // 6 log top
+  noisy(6, 168,134,86, 18);
+  g.save(); g.beginPath();
+  g.rect(2*TILE,TILE,TILE,TILE); g.clip();
+  for (let r=13;r>0;r-=3){ g.strokeStyle="rgba(96,70,38,.8)"; g.lineWidth=1.5;
+    g.beginPath(); g.arc(2*TILE+16, TILE+16, r, 0, Math.PI*2); g.stroke(); }
+  g.restore();
+  // 7 leaves
+  noisy(7, 62,124,48, 40);
+  for (let i=0;i<120;i++) px(7,(Math.random()*TILE)|0,(Math.random()*TILE)|0, Math.random()<0.5?"rgb(40,92,34)":"rgb(88,158,62)");
+  for (let i=0;i<14;i++) px(7,(Math.random()*TILE)|0,(Math.random()*TILE)|0,"rgb(24,52,20)");
+  // 8 planks
+  noisy(8, 184,142,84, 22);
+  for (let y=0;y<TILE;y+=8){ rect(8, 0, y, TILE, 1, "rgba(120,88,48,.9)"); }
+  for (let y=0;y<TILE;y+=8){ rect(8, (Math.random()*TILE)|0, y, 1, 8, "rgba(120,88,48,.6)"); }
+  // 9 coal / 10 iron / 11 diamond ore
+  noisy(9, 136,136,140, 26);  blobs(9,  "rgb(38,38,40)", 5, 6);
+  noisy(10,136,136,140, 26);  blobs(10, "rgb(200,160,120)", 5, 5);
+  noisy(11,136,136,140, 26);  blobs(11, "rgb(110,225,232)", 5, 5);
+  // 12 bedrock
+  noisy(12, 62,62,68, 44);
+  blobs(12, "rgb(28,28,32)", 7, 6);
+  // 13 cobble
+  noisy(13, 128,128,132, 20);
+  for (let i=0;i<10;i++){
+    const bx=(Math.random()*(TILE-9))|0, by=(Math.random()*(TILE-9))|0, s=5+((Math.random()*4)|0);
+    rect(13, bx, by, s, s, "rgb(150,150,155)");
+    rect(13, bx, by+s-1, s, 1, "rgb(92,92,96)");
+    rect(13, bx+s-1, by, 1, s, "rgb(92,92,96)");
+  }
+  // 14 gravel
+  noisy(14, 140,132,128, 30);
+  for (let i=0;i<40;i++){ const bx=(Math.random()*(TILE-3))|0, by=(Math.random()*(TILE-3))|0;
+    rect(14, bx,by,2,2, Math.random()<0.5?"rgb(102,96,92)":"rgb(178,170,164)"); }
+  // 15 TNT
+  noisy(15, 190,44,38, 22);
+  rect(15, 0, 10, TILE, 12, "rgb(238,238,232)");
+  rect(15, 0, 10, TILE, 1, "rgb(150,150,146)");
+  rect(15, 0, 21, TILE, 1, "rgb(150,150,146)");
+  g.fillStyle = "rgb(40,40,44)"; g.font = "bold 11px monospace"; g.textAlign="center";
+  g.fillText("TNT", 3*TILE+16, 3*TILE+20);
+  return c;
+}
+
+// ------------------------------------------------------------- webgl -------
+const canvas = document.getElementById("gl");
+const gl = canvas.getContext("webgl", { antialias:false, alpha:false });
+if (!gl) { document.body.innerHTML = "<h1 style='padding:40px;font-family:monospace'>This browser has no WebGL. :(</h1>"; throw new Error("no webgl"); }
+
+function compile(type, src){
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src); gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+  return s;
+}
+function program(vs, fs){
+  const p = gl.createProgram();
+  gl.attachShader(p, compile(gl.VERTEX_SHADER, vs));
+  gl.attachShader(p, compile(gl.FRAGMENT_SHADER, fs));
+  gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+  return p;
+}
+
+const SKY = [0.47, 0.71, 1.0];
+
+const terrainProg = program(`
+  attribute vec3 aPos;
+  attribute vec2 aUV;
+  attribute float aLight;
+  uniform mat4 uMVP;
+  uniform vec3 uEye;
+  varying vec2 vUV;
+  varying float vLight;
+  varying float vDist;
+  void main(){
+    vUV = aUV; vLight = aLight;
+    vDist = length(aPos - uEye);
+    gl_Position = uMVP * vec4(aPos, 1.0);
+  }`, `
+  precision mediump float;
+  uniform sampler2D uTex;
+  uniform vec3 uFogColor;
+  uniform vec3 uTint;
+  varying vec2 vUV;
+  varying float vLight;
+  varying float vDist;
+  void main(){
+    vec4 t = texture2D(uTex, vUV);
+    vec3 c = t.rgb * vLight;
+    c = mix(c, uTint, 0.0);
+    float fog = clamp((vDist - 42.0) / 34.0, 0.0, 1.0);
+    gl_FragColor = vec4(mix(c, uFogColor, fog), 1.0);
+  }`);
+
+const partProg = program(`
+  attribute vec3 aPos;
+  attribute vec3 aColor;
+  attribute float aSize;
+  uniform mat4 uMVP;
+  uniform float uScale;
+  varying vec3 vColor;
+  void main(){
+    vColor = aColor;
+    gl_Position = uMVP * vec4(aPos, 1.0);
+    gl_PointSize = clamp(uScale * aSize / max(gl_Position.w, 0.1), 1.0, 60.0);
+  }`, `
+  precision mediump float;
+  varying vec3 vColor;
+  void main(){ gl_FragColor = vec4(vColor, 1.0); }`);
+
+// highlight box around the targeted block
+const lineProg = program(`
+  attribute vec3 aPos;
+  uniform mat4 uMVP;
+  void main(){ gl_Position = uMVP * vec4(aPos, 1.0); }`, `
+  precision mediump float;
+  uniform vec4 uColor;
+  void main(){ gl_FragColor = uColor; }`);
+
+const TL = {
+  aPos: gl.getAttribLocation(terrainProg,"aPos"),
+  aUV: gl.getAttribLocation(terrainProg,"aUV"),
+  aLight: gl.getAttribLocation(terrainProg,"aLight"),
+  uMVP: gl.getUniformLocation(terrainProg,"uMVP"),
+  uEye: gl.getUniformLocation(terrainProg,"uEye"),
+  uTex: gl.getUniformLocation(terrainProg,"uTex"),
+  uFog: gl.getUniformLocation(terrainProg,"uFogColor"),
+};
+const PL = {
+  aPos: gl.getAttribLocation(partProg,"aPos"),
+  aColor: gl.getAttribLocation(partProg,"aColor"),
+  aSize: gl.getAttribLocation(partProg,"aSize"),
+  uMVP: gl.getUniformLocation(partProg,"uMVP"),
+  uScale: gl.getUniformLocation(partProg,"uScale"),
+};
+const LL = {
+  aPos: gl.getAttribLocation(lineProg,"aPos"),
+  uMVP: gl.getUniformLocation(lineProg,"uMVP"),
+  uColor: gl.getUniformLocation(lineProg,"uColor"),
+};
+
+const tex = gl.createTexture();
+gl.bindTexture(gl.TEXTURE_2D, tex);
+gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+const atlasCanvas = buildAtlas();
+gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, atlasCanvas);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+const uintExt = gl.getExtension("OES_element_index_uint");
+const IDX_TYPE = uintExt ? gl.UNSIGNED_INT : gl.UNSIGNED_SHORT;
+
+gl.enable(gl.DEPTH_TEST);
+gl.enable(gl.CULL_FACE);
+gl.cullFace(gl.BACK);
+gl.clearColor(SKY[0], SKY[1], SKY[2], 1);
+
+// ------------------------------------------------------------- math --------
+function mat4Perspective(fovy, aspect, near, far){
+  const f = 1/Math.tan(fovy/2), nf = 1/(near-far);
+  return new Float32Array([
+    f/aspect,0,0,0,
+    0,f,0,0,
+    0,0,(far+near)*nf,-1,
+    0,0,2*far*near*nf,0 ]);
+}
+function mat4Mul(a,b){ // column-major, returns a*b
+  const o = new Float32Array(16);
+  for (let c=0;c<4;c++) for (let r=0;r<4;r++){
+    o[c*4+r] = a[0*4+r]*b[c*4+0] + a[1*4+r]*b[c*4+1] + a[2*4+r]*b[c*4+2] + a[3*4+r]*b[c*4+3];
+  }
+  return o;
+}
+function mat4View(eye, fwd, up){
+  const f = fwd, u = up;
+  const r = [ f[1]*u[2]-f[2]*u[1], f[2]*u[0]-f[0]*u[2], f[0]*u[1]-f[1]*u[0] ];
+  const rl = Math.hypot(r[0],r[1],r[2]); r[0]/=rl; r[1]/=rl; r[2]/=rl;
+  const uu = [ r[1]*f[2]-r[2]*f[1], r[2]*f[0]-r[0]*f[2], r[0]*f[1]-r[1]*f[0] ];
+  const d = (a,b)=> a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
+  return new Float32Array([
+    r[0], uu[0], -f[0], 0,
+    r[1], uu[1], -f[1], 0,
+    r[2], uu[2], -f[2], 0,
+    -d(r,eye), -d(uu,eye), d(f,eye), 1 ]);
+}
+
+// ------------------------------------------------------------- meshing -----
+// face: normal n, "up" axis v; the other tangent u = cross(v, n) keeps winding CCW.
+const FACES = [
+  { n:[ 1,0,0], v:[0,1,0], light:0.78, tile:2 },
+  { n:[-1,0,0], v:[0,1,0], light:0.78, tile:2 },
+  { n:[ 0,1,0], v:[0,0,1], light:1.00, tile:0 },
+  { n:[0,-1,0], v:[0,0,1], light:0.52, tile:1 },
+  { n:[0,0, 1], v:[0,1,0], light:0.90, tile:2 },
+  { n:[0,0,-1], v:[0,1,0], light:0.90, tile:2 },
+].map(f => {
+  const v=f.v, n=f.n;
+  f.u = [ v[1]*n[2]-v[2]*n[1], v[2]*n[0]-v[0]*n[2], v[0]*n[1]-v[1]*n[0] ];
+  return f;
+});
+const CORNERS = [[-1,-1],[1,-1],[1,1],[-1,1]];
+const AO_LIGHT = [0.52, 0.70, 0.86, 1.0];
+const EPS = 0.0015;
+
+const chunks = [];
+for (let cz=0; cz<CZ; cz++) for (let cx=0; cx<CX; cx++){
+  chunks.push({ cx, cz, vbo:gl.createBuffer(), ibo:gl.createBuffer(), count:0, dirty:true });
+}
+function chunkAt(cx,cz){ return (cx<0||cz<0||cx>=CX||cz>=CZ) ? null : chunks[cz*CX+cx]; }
+function dirtyAround(x,z){
+  const cx = Math.floor(x/CH), cz = Math.floor(z/CH);
+  for (let dz=-1; dz<=1; dz++) for (let dx=-1; dx<=1; dx++){
+    const c = chunkAt(cx+dx, cz+dz); if (c) c.dirty = true;
+  }
+}
+
+const MAX_VERTS = uintExt ? 4000000 : 65530;
+const vertScratch = new Float32Array(1 << 21);
+const idxScratch  = uintExt ? new Uint32Array(1 << 20) : new Uint16Array(1 << 18);
+
+function buildChunk(ch){
+  let vi = 0, ii = 0, verts = 0;
+  const x0 = ch.cx*CH, z0 = ch.cz*CH;
+  const xe = Math.min(x0+CH, WX), ze = Math.min(z0+CH, WZ);
+
+  for (let x=x0; x<xe; x++)
+  for (let z=z0; z<ze; z++)
+  for (let y=0; y<WY; y++){
+    const b = world[vidx(x,y,z)];
+    if (b === AIR) continue;
+    const def = BLOCKS[b];
+    for (let fi=0; fi<6; fi++){
+      const F = FACES[fi];
+      const nx=x+F.n[0], ny=y+F.n[1], nz=z+F.n[2];
+      if (isSolid(getBlock(nx,ny,nz))) continue;
+      if (verts + 4 > MAX_VERTS) break;   // safety: index-size cap
+
+      const t = def.tiles[F.tile];
+      const tx = (t%4)/4, ty = Math.floor(t/4)/4;
+      const u = F.u, v = F.v, n = F.n;
+
+      for (let k=0; k<4; k++){
+        const du = CORNERS[k][0], dv = CORNERS[k][1];
+        // ambient occlusion from the three neighbours around this corner
+        const s1 = isSolid(getBlock(nx+u[0]*du, ny+u[1]*du, nz+u[2]*du)) ? 1 : 0;
+        const s2 = isSolid(getBlock(nx+v[0]*dv, ny+v[1]*dv, nz+v[2]*dv)) ? 1 : 0;
+        const co = isSolid(getBlock(nx+u[0]*du+v[0]*dv, ny+u[1]*du+v[1]*dv, nz+u[2]*du+v[2]*dv)) ? 1 : 0;
+        const ao = (s1 && s2) ? 0 : 3 - (s1+s2+co);
+
+        vertScratch[vi++] = x + 0.5 + 0.5*(n[0] + u[0]*du + v[0]*dv);
+        vertScratch[vi++] = y + 0.5 + 0.5*(n[1] + u[1]*du + v[1]*dv);
+        vertScratch[vi++] = z + 0.5 + 0.5*(n[2] + u[2]*du + v[2]*dv);
+        const un = du > 0 ? 1 : 0, vn = dv > 0 ? 1 : 0;
+        vertScratch[vi++] = tx + (un ? 0.25-EPS : EPS);
+        vertScratch[vi++] = ty + (vn ? EPS : 0.25-EPS);
+        vertScratch[vi++] = F.light * AO_LIGHT[ao];
+      }
+      idxScratch[ii++]=verts;   idxScratch[ii++]=verts+1; idxScratch[ii++]=verts+2;
+      idxScratch[ii++]=verts;   idxScratch[ii++]=verts+2; idxScratch[ii++]=verts+3;
+      verts += 4;
+    }
+  }
+  gl.bindBuffer(gl.ARRAY_BUFFER, ch.vbo);
+  gl.bufferData(gl.ARRAY_BUFFER, vertScratch.subarray(0, vi), gl.DYNAMIC_DRAW);
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ch.ibo);
+  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idxScratch.subarray(0, ii), gl.DYNAMIC_DRAW);
+  ch.count = ii;
+  ch.dirty = false;
+}
+
+// ------------------------------------------------------------- audio ------
+let actx = null;
+function audioInit(){ if (!actx) actx = new (window.AudioContext||window.webkitAudioContext)(); }
+function noiseBuffer(dur){
+  const n = (actx.sampleRate*dur)|0, buf = actx.createBuffer(1, n, actx.sampleRate), d = buf.getChannelData(0);
+  for (let i=0;i<n;i++) d[i] = (Math.random()*2-1) * Math.pow(1 - i/n, 2);
+  return buf;
+}
+function sfxBoom(dist){
+  if (!actx) return;
+  const vol = Math.max(0.05, 1 - dist/40);
+  const src = actx.createBufferSource(); src.buffer = noiseBuffer(1.1);
+  const lp = actx.createBiquadFilter(); lp.type="lowpass";
+  lp.frequency.setValueAtTime(1400, actx.currentTime);
+  lp.frequency.exponentialRampToValueAtTime(120, actx.currentTime+0.9);
+  const g = actx.createGain();
+  g.gain.setValueAtTime(0.75*vol, actx.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, actx.currentTime+1.1);
+  src.connect(lp); lp.connect(g); g.connect(actx.destination); src.start();
+  // low thump
+  const o = actx.createOscillator(), og = actx.createGain();
+  o.type="sine"; o.frequency.setValueAtTime(110, actx.currentTime);
+  o.frequency.exponentialRampToValueAtTime(28, actx.currentTime+0.5);
+  og.gain.setValueAtTime(0.6*vol, actx.currentTime);
+  og.gain.exponentialRampToValueAtTime(0.001, actx.currentTime+0.6);
+  o.connect(og); og.connect(actx.destination); o.start(); o.stop(actx.currentTime+0.65);
+}
+function blip(freq, dur, type, vol){
+  if (!actx) return;
+  const o = actx.createOscillator(), g = actx.createGain();
+  o.type = type||"square"; o.frequency.setValueAtTime(freq, actx.currentTime);
+  g.gain.setValueAtTime(vol||0.12, actx.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, actx.currentTime+dur);
+  o.connect(g); g.connect(actx.destination); o.start(); o.stop(actx.currentTime+dur+0.02);
+}
+function sfxDig(){ blip(140 + Math.random()*60, 0.10, "square", 0.08); }
+function sfxPlace(){ blip(320 + Math.random()*80, 0.07, "triangle", 0.10); }
+function sfxHurt(){ blip(180, 0.22, "sawtooth", 0.16); }
+function sfxJackpot(){ [660,880,1320].forEach((f,i)=> setTimeout(()=>blip(f,0.14,"triangle",0.12), i*70)); }
+
+// ------------------------------------------------------------- player -----
+const SPAWN = { x: WX/2, z: WZ/2 };
+const player = {
+  x: SPAWN.x, y: 40, z: SPAWN.z,
+  vx:0, vy:0, vz:0,
+  yaw: 0, pitch: -0.2,
+  onGround:false, fly:false,
+  hp: 20, dead:false,
+};
+const EYE = 1.62, PW = 0.32, PH = 1.8;
+
+const inventory = { [PLANKS]:32, [TNT]:5 };
+const loot = { [COAL]:0, [IRON]:0, [DIAMOND]:0 };
+const HOTBAR = [GRASS, DIRT, STONE, COBBLE, SAND, LOG, PLANKS, LEAVES, TNT];
+let selected = 6;
+const stats = { mined:0, booms:0, streak:0, best:0 };
+
+function surfaceY(x,z){
+  for (let y=WY-1; y>0; y--) if (getBlock(x,y,z) !== AIR) return y+1;
+  return 1;
+}
+function respawn(){
+  const sx = Math.floor(SPAWN.x), sz = Math.floor(SPAWN.z);
+  player.x = sx+0.5; player.z = sz+0.5;
+  player.y = surfaceY(sx,sz) + 0.2;
+  player.vx = player.vy = player.vz = 0;
+  player.hp = 20; player.dead = false; player.fly = false;
+  updateHUD();
+}
+
+function playerBoxCollides(px,py,pz){
+  const x0=Math.floor(px-PW), x1=Math.floor(px+PW);
+  const y0=Math.floor(py), y1=Math.floor(py+PH-0.001);
+  const z0=Math.floor(pz-PW), z1=Math.floor(pz+PW);
+  for (let x=x0;x<=x1;x++) for (let y=y0;y<=y1;y++) for (let z=z0;z<=z1;z++)
+    if (isBlocking(x,y,z)) return true;
+  return false;
+}
+
+function movePlayer(dx,dy,dz){
+  // axis by axis, so sliding along walls feels right
+  if (dx){
+    const nx = player.x + dx;
+    if (!playerBoxCollides(nx, player.y, player.z)) player.x = nx; else player.vx = 0;
+  }
+  if (dz){
+    const nz = player.z + dz;
+    if (!playerBoxCollides(player.x, player.y, nz)) player.z = nz; else player.vz = 0;
+  }
+  if (dy){
+    const ny = player.y + dy;
+    if (!playerBoxCollides(player.x, ny, player.z)) { player.y = ny; player.onGround = false; }
+    else {
+      if (dy < 0) player.onGround = true;
+      player.vy = 0;
+    }
+  }
+}
+
+function damage(amount, reason){
+  if (player.dead || amount <= 0) return;
+  player.hp -= amount;
+  flashRed(Math.min(1, amount/12));
+  sfxHurt();
+  if (player.hp <= 0){
+    player.hp = 0; player.dead = true;
+    document.getElementById("deathMsg").textContent = reason || "You gambled one block too many.";
+    document.getElementById("deadOverlay").classList.remove("hidden");
+    exitPointerLock();
+  }
+  updateHUD();
+}
+
+// ------------------------------------------------------------- particles --
+const MAXP = 2000;
+const pPos = new Float32Array(MAXP*3), pCol = new Float32Array(MAXP*3), pSize = new Float32Array(MAXP);
+const pVel = new Float32Array(MAXP*3), pLife = new Float32Array(MAXP);
+let pCount = 0;
+const pVBO = gl.createBuffer(), pCBO = gl.createBuffer(), pSBO = gl.createBuffer();
+
+function spawnParticle(x,y,z, vx,vy,vz, r,g_,b, size, life){
+  let i = pCount < MAXP ? pCount++ : (Math.random()*MAXP)|0;
+  pPos[i*3]=x; pPos[i*3+1]=y; pPos[i*3+2]=z;
+  pVel[i*3]=vx; pVel[i*3+1]=vy; pVel[i*3+2]=vz;
+  pCol[i*3]=r; pCol[i*3+1]=g_; pCol[i*3+2]=b;
+  pSize[i]=size; pLife[i]=life;
+}
+function updateParticles(dt){
+  for (let i=0;i<pCount;i++){
+    if (pLife[i] <= 0) continue;
+    pLife[i] -= dt;
+    pVel[i*3+1] -= 16*dt;
+    pPos[i*3]   += pVel[i*3]*dt;
+    pPos[i*3+1] += pVel[i*3+1]*dt;
+    pPos[i*3+2] += pVel[i*3+2]*dt;
+    if (isBlocking(Math.floor(pPos[i*3]), Math.floor(pPos[i*3+1]), Math.floor(pPos[i*3+2]))){
+      pPos[i*3+1] -= pVel[i*3+1]*dt;
+      pVel[i*3+1] *= -0.28; pVel[i*3] *= 0.6; pVel[i*3+2] *= 0.6;
+    }
+    if (pLife[i] <= 0){ pSize[i] = 0; pPos[i*3+1] = -9999; }
+  }
+}
+function blockParticles(x,y,z, b, count, force){
+  const c = BLOCKS[b] ? BLOCKS[b].color : [0.5,0.5,0.5];
+  for (let i=0;i<count;i++){
+    const j = 0.7 + Math.random()*0.5;
+    spawnParticle(
+      x+Math.random(), y+Math.random(), z+Math.random(),
+      (Math.random()-0.5)*force, Math.random()*force*0.8, (Math.random()-0.5)*force,
+      c[0]*j, c[1]*j, c[2]*j, 4+Math.random()*4, 0.6+Math.random()*0.9);
+  }
+}
+
+// ------------------------------------------------------------- explosions --
+let shake = 0;
+const pendingBooms = [];
+
+function explode(cx, cy, cz, power){
+  const R = power;
+  sfxBoom(Math.hypot(player.x-cx, player.y-cy, player.z-cz));
+  // fireball
+  for (let i=0;i<90;i++){
+    const a = Math.random()*Math.PI*2, e = Math.acos(Math.random()*2-1), s = 3 + Math.random()*13;
+    const t = Math.random();
+    spawnParticle(cx+0.5, cy+0.5, cz+0.5,
+      Math.sin(e)*Math.cos(a)*s, Math.cos(e)*s*0.9+2, Math.sin(e)*Math.sin(a)*s,
+      1.0, 0.55*t + 0.25, 0.10*t, 6+Math.random()*9, 0.35+Math.random()*0.7);
+  }
+  for (let i=0;i<45;i++){
+    const g_ = 0.25+Math.random()*0.35;
+    spawnParticle(cx+0.5, cy+0.5, cz+0.5,
+      (Math.random()-0.5)*7, Math.random()*5, (Math.random()-0.5)*7,
+      g_, g_, g_, 8+Math.random()*10, 0.9+Math.random()*1.1);
+  }
+
+  const r = Math.ceil(R);
+  for (let x=cx-r; x<=cx+r; x++)
+  for (let y=cy-r; y<=cy+r; y++)
+  for (let z=cz-r; z<=cz+r; z++){
+    const b = getBlock(x,y,z);
+    if (b === AIR || b === BEDROCK) continue;
+    const d = Math.hypot(x-cx, y-cy, z-cz);
+    if (d > R * (0.72 + Math.random()*0.5)) continue;
+    world[vidx(x,y,z)] = AIR;
+    dirtyAround(x,z);
+    if (Math.random() < 0.5) blockParticles(x,y,z,b, 2, 6);
+    if (b === TNT) pendingBooms.push({ x, y, z, power:R, t: 0.12 + Math.random()*0.25 });
+  }
+
+  const px = player.x, py = player.y+EYE*0.5, pz = player.z;
+  const pd = Math.hypot(px-cx-0.5, py-cy-0.5, pz-cz-0.5);
+  const hurtR = R*2.3;
+  if (pd < hurtR){
+    const f = 1 - pd/hurtR;
+    const kb = 16*f;
+    const nx = (px-cx-0.5)/(pd||1), ny = (py-cy-0.5)/(pd||1), nz = (pz-cz-0.5)/(pd||1);
+    player.vx += nx*kb; player.vy += Math.max(ny*kb, 5*f); player.vz += nz*kb;
+    // chain reactions are funny; orbital velocity is not
+    player.vx = Math.max(-42, Math.min(42, player.vx));
+    player.vz = Math.max(-42, Math.min(42, player.vz));
+    player.vy = Math.max(-55, Math.min(32, player.vy));
+    player.onGround = false;
+    damage(Math.round(f*f*16 + 1), "Blown to bits by a block you were only trying to mine.");
+    shake = Math.max(shake, f*0.9);
+    boomFlash(f);
+  } else {
+    shake = Math.max(shake, Math.max(0, 0.5 - pd/60));
+  }
+}
+
+// ------------------------------------------------------------- raycast ----
+function camDir(){
+  const cp = Math.cos(player.pitch), sp = Math.sin(player.pitch);
+  return [ -Math.sin(player.yaw)*cp, sp, -Math.cos(player.yaw)*cp ];
+}
+function raycast(maxD){
+  const o = [player.x, player.y+EYE, player.z], d = camDir();
+  let x=Math.floor(o[0]), y=Math.floor(o[1]), z=Math.floor(o[2]);
+  const step=[Math.sign(d[0]), Math.sign(d[1]), Math.sign(d[2])];
+  const tDelta=[Math.abs(1/d[0]), Math.abs(1/d[1]), Math.abs(1/d[2])];
+  const tMax=[
+    d[0]===0 ? Infinity : (d[0]>0 ? (x+1-o[0]) : (o[0]-x)) * tDelta[0],
+    d[1]===0 ? Infinity : (d[1]>0 ? (y+1-o[1]) : (o[1]-y)) * tDelta[1],
+    d[2]===0 ? Infinity : (d[2]>0 ? (z+1-o[2]) : (o[2]-z)) * tDelta[2],
+  ];
+  let nx=0, ny=0, nz=0, t=0;
+  for (let i=0;i<160;i++){
+    if (getBlock(x,y,z) !== AIR) return { x,y,z, nx,ny,nz };
+    if (tMax[0] < tMax[1] && tMax[0] < tMax[2]) { t=tMax[0]; x+=step[0]; tMax[0]+=tDelta[0]; nx=-step[0]; ny=0; nz=0; }
+    else if (tMax[1] < tMax[2])                 { t=tMax[1]; y+=step[1]; tMax[1]+=tDelta[1]; nx=0; ny=-step[1]; nz=0; }
+    else                                        { t=tMax[2]; z+=step[2]; tMax[2]+=tDelta[2]; nx=0; ny=0; nz=-step[2]; }
+    if (t > maxD) return null;
+  }
+  return null;
+}
+
+// ------------------------------------------------------------- the gamble -
+const BOOM_CHANCE = 0.5;
+const LUCKY_LINES = ["phew.", "clean break!", "no boom!", "safe!", "nice.", "still alive."];
+const BOOM_LINES  = ["BOOM!", "KABOOM!", "THAT ONE WAS A BOMB", "OOPS", "50/50 SAYS NO"];
+
+function mine(){
+  const hit = raycast(6);
+  if (!hit) return;
+  const b = getBlock(hit.x, hit.y, hit.z);
+  if (b === AIR) return;
+  if (b === BEDROCK){ toast("bedrock doesn't care", "#9fb2c9"); sfxDig(); return; }
+
+  stats.mined++;
+  const isTNT = (b === TNT);
+  const boom = isTNT || Math.random() < BOOM_CHANCE;
+
+  world[vidx(hit.x, hit.y, hit.z)] = AIR;
+  dirtyAround(hit.x, hit.z);
+
+  if (boom){
+    stats.booms++;
+    if (stats.streak > stats.best) stats.best = stats.streak;
+    stats.streak = 0;
+    explode(hit.x, hit.y, hit.z, isTNT ? 3.4 : 2.7);
+    toast(isTNT ? "TNT — that one was never 50/50" : BOOM_LINES[(Math.random()*BOOM_LINES.length)|0], "#ff8a3d");
+  } else {
+    blockParticles(hit.x, hit.y, hit.z, b, 14, 3.5);
+    sfxDig();
+    stats.streak++;
+    if (stats.streak > stats.best) stats.best = stats.streak;
+    if (loot[b] !== undefined){
+      loot[b]++;
+      if (b === DIAMOND){ toast("DIAMOND! and it didn't explode!", "#7ff0f7"); sfxJackpot(); }
+      else toast("+1 " + BLOCKS[b].name, "#ffe08a");
+    } else {
+      inventory[b] = (inventory[b]||0) + 1;
+      if (stats.streak > 0 && stats.streak % 5 === 0) toast("SAFE STREAK " + stats.streak + "!", "#7dff9b");
+      else if (Math.random() < 0.30) toast(LUCKY_LINES[(Math.random()*LUCKY_LINES.length)|0], "#cfe9ff");
+    }
+  }
+  updateHUD();
+}
+
+function place(){
+  const hit = raycast(6);
+  if (!hit) return;
+  const type = HOTBAR[selected];
+  if (!(inventory[type] > 0)){ toast("out of " + BLOCKS[type].name, "#ff9d9d"); return; }
+  const x = hit.x + hit.nx, y = hit.y + hit.ny, z = hit.z + hit.nz;
+  if (x<0||x>=WX||y<0||y>=WY||z<0||z>=WZ) return;
+  if (getBlock(x,y,z) !== AIR) return;
+  // don't seal yourself inside a block
+  const oldB = AIR;
+  world[vidx(x,y,z)] = type;
+  if (playerBoxCollides(player.x, player.y, player.z)){ world[vidx(x,y,z)] = oldB; return; }
+  dirtyAround(x,z);
+  inventory[type]--;
+  sfxPlace();
+  updateHUD();
+}
+
+// ------------------------------------------------------------- hud --------
+const elHearts = document.getElementById("hearts");
+const elHotbar = document.getElementById("hotbar");
+const elToasts = document.getElementById("toasts");
+const elFlash  = document.getElementById("flash");
+const elBoomFlash = document.getElementById("boomflash");
+const elCross = document.getElementById("cross");
+
+function toast(text, color){
+  const d = document.createElement("div");
+  d.className = "toast"; d.textContent = text;
+  if (color) d.style.color = color;
+  elToasts.appendChild(d);
+  setTimeout(()=> d.remove(), 1250);
+}
+let flashTimer = null;
+function flashRed(amount){
+  elFlash.style.opacity = Math.min(0.9, amount);
+  clearTimeout(flashTimer);
+  flashTimer = setTimeout(()=> elFlash.style.opacity = 0, 90);
+}
+function boomFlash(amount){
+  elBoomFlash.style.opacity = Math.min(0.85, amount*0.9);
+  elBoomFlash.style.transition = "none";
+  requestAnimationFrame(()=>{
+    elBoomFlash.style.transition = "opacity .45s ease";
+    elBoomFlash.style.opacity = 0;
+  });
+}
+
+function tileIcon(block, size){
+  const c = document.createElement("canvas");
+  c.width = c.height = TILE; 
+  const g = c.getContext("2d");
+  g.imageSmoothingEnabled = false;
+  const t = BLOCKS[block].tiles[2];
+  g.drawImage(atlasCanvas, (t%4)*TILE, Math.floor(t/4)*TILE, TILE, TILE, 0, 0, TILE, TILE);
+  return c;
+}
+function buildHotbar(){
+  elHotbar.innerHTML = "";
+  HOTBAR.forEach((b, i)=>{
+    const d = document.createElement("div");
+    d.className = "slot";
+    d.appendChild(tileIcon(b));
+    const k = document.createElement("div"); k.className="k"; k.textContent = i+1; d.appendChild(k);
+    const n = document.createElement("div"); n.className="n"; d.appendChild(n);
+    d.title = BLOCKS[b].name;
+    elHotbar.appendChild(d);
+  });
+}
+function updateHUD(){
+  // hearts: 10 hearts, 20 hp
+  let h = "";
+  for (let i=0;i<10;i++){
+    const v = player.hp - i*2;
+    h += `<span class="heart ${v>=2?"":(v===1?"half":"empty")}">${v>=1?"♥":"♡"}</span>`;
+  }
+  elHearts.innerHTML = h;
+
+  [...elHotbar.children].forEach((slot, i)=>{
+    const b = HOTBAR[i], n = inventory[b]||0;
+    slot.classList.toggle("sel", i === selected);
+    slot.classList.toggle("zero", n === 0);
+    slot.querySelector(".n").textContent = n > 0 ? n : "";
+  });
+
+  document.getElementById("sMined").textContent = stats.mined;
+  document.getElementById("sBooms").textContent = stats.booms;
+  document.getElementById("streak").textContent = stats.streak;
+  document.getElementById("sBest").textContent = stats.best;
+  document.getElementById("lootLine").innerHTML =
+    `coal ${loot[COAL]} · iron ${loot[IRON]} · <span style="color:#7ff0f7">diamond ${loot[DIAMOND]}</span>`;
+}
+
+// ------------------------------------------------------------- input ------
+const keys = {};
+let paused = true;
+let lastSpaceTap = 0;
+
+function toggleFly(){
+  player.fly = !player.fly;
+  player.vy = 0;                       // let go of the sky and you drop
+  toast(player.fly ? "FLY ON — space up, shift down" : "fly off — you drop!", "#cfe9ff");
+  blip(player.fly ? 620 : 300, 0.09, "triangle", 0.09);
+}
+
+addEventListener("keydown", e => {
+  const wasDown = keys[e.code];
+  keys[e.code] = true;
+  if (e.code === "Escape") pauseGame();
+  // double-tap space: fly. double-tap again: you drop.
+  if (e.code === "Space" && !wasDown && !paused){
+    const now = performance.now();
+    if (now - lastSpaceTap < 340){ toggleFly(); lastSpaceTap = 0; }
+    else lastSpaceTap = now;
+  }
+  if (e.code === "KeyF" && !paused) toggleFly();
+  if (e.code.startsWith("Digit")){
+    const n = parseInt(e.code.slice(5),10);
+    if (n >= 1 && n <= 9){ selected = n-1; updateHUD(); }
+  }
+  if (["Space","ArrowUp","ArrowDown","ArrowLeft","ArrowRight"].includes(e.code)) e.preventDefault();
+});
+addEventListener("keyup", e => { keys[e.code] = false; });
+function releaseAllKeys(){ for (const k in keys) keys[k] = false; }
+addEventListener("blur", releaseAllKeys);
+document.addEventListener("visibilitychange", ()=>{ if (document.hidden){ releaseAllKeys(); pauseGame(); } });
+addEventListener("wheel", e => {
+  if (paused) return;
+  selected = (selected + (e.deltaY > 0 ? 1 : -1) + HOTBAR.length) % HOTBAR.length;
+  updateHUD();
+}, { passive:true });
+
+canvas.addEventListener("mousedown", e => {
+  if (paused || player.dead) return;
+  dragging = true;
+  lockPointer();
+  if (e.button === 0) mine();
+  else if (e.button === 2) place();
+});
+canvas.addEventListener("contextmenu", e => e.preventDefault());
+
+let dragging = false;
+addEventListener("mouseup", ()=> dragging = false);
+document.addEventListener("mousemove", e => {
+  const locked = document.pointerLockElement === canvas;
+  if (paused || (!locked && !dragging)) return;
+  const s = 0.0022;
+  player.yaw   -= e.movementX * s;
+  player.pitch -= e.movementY * s;
+  const lim = Math.PI/2 - 0.001;
+  player.pitch = Math.max(-lim, Math.min(lim, player.pitch));
+});
+
+function exitPointerLock(){ if (document.pointerLockElement) document.exitPointerLock(); }
+// some embedded browsers refuse pointer lock — that is fine, drag-to-look covers it
+function lockPointer(){
+  if (document.pointerLockElement === canvas) return;
+  try { const r = canvas.requestPointerLock(); if (r && r.catch) r.catch(()=>{}); } catch (e) {}
+}
+function pauseGame(){
+  if (paused) return;
+  paused = true;
+  releaseAllKeys();
+  exitPointerLock();
+  if (!player.dead) document.getElementById("pauseOverlay").classList.remove("hidden");
+}
+function startGame(){
+  audioInit();
+  document.getElementById("startOverlay").classList.add("hidden");
+  document.getElementById("pauseOverlay").classList.add("hidden");
+  paused = false;
+  prevT = performance.now();
+  lockPointer();   // a bonus: without it you can still click-and-drag to look
+}
+document.addEventListener("pointerlockchange", ()=>{
+  if (document.pointerLockElement !== canvas) pauseGame();
+});
+document.getElementById("startBtn").onclick = startGame;
+document.getElementById("resumeBtn").onclick = startGame;
+document.getElementById("respawnBtn").onclick = ()=>{
+  document.getElementById("deadOverlay").classList.add("hidden");
+  respawn(); startGame();
+};
+
+// ------------------------------------------------------------- loop -------
+function resize(){
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  canvas.width = Math.floor(innerWidth * dpr);
+  canvas.height = Math.floor(innerHeight * dpr);
+  gl.viewport(0, 0, canvas.width, canvas.height);
+}
+addEventListener("resize", resize);
+
+function update(dt){
+  // queued chain-reaction TNT
+  for (let i=pendingBooms.length-1; i>=0; i--){
+    const p = pendingBooms[i];
+    p.t -= dt;
+    if (p.t <= 0){ pendingBooms.splice(i,1); explode(p.x, p.y, p.z, p.power); }
+  }
+  updateParticles(dt);
+  shake = Math.max(0, shake - dt*2.2);
+  if (paused || player.dead) return;
+
+  const speed = (keys.ShiftLeft||keys.ShiftRight ? 9.5 : 5.2) * (player.fly ? 2.2 : 1);
+  let fx=0, fz=0;
+  if (keys.KeyW || keys.ArrowUp) fz += 1;
+  if (keys.KeyS || keys.ArrowDown) fz -= 1;
+  if (keys.KeyA || keys.ArrowLeft) fx -= 1;
+  if (keys.KeyD || keys.ArrowRight) fx += 1;
+  const len = Math.hypot(fx,fz);
+  if (len > 0){ fx/=len; fz/=len; }
+  const sy = Math.sin(player.yaw), cy = Math.cos(player.yaw);
+  const wishX = (-sy*fz + cy*fx) * speed;
+  const wishZ = (-cy*fz - sy*fx) * speed;
+
+  // knockback decays; player input blends back in
+  const control = player.onGround ? 12 : 3.5;
+  player.vx += (wishX - player.vx) * Math.min(1, control*dt);
+  player.vz += (wishZ - player.vz) * Math.min(1, control*dt);
+
+  if (player.fly){
+    let vy = 0;
+    if (keys.Space) vy += speed;
+    if (keys.ShiftLeft) vy -= speed;
+    player.vy = vy;
+  } else {
+    player.vy -= 28 * dt;
+    if (player.vy < -55) player.vy = -55;
+    if (keys.Space && player.onGround){ player.vy = 9.2; player.onGround = false; }
+  }
+
+  const wasFalling = player.vy;
+  player.onGround = false;
+  movePlayer(player.vx*dt, 0, 0);
+  movePlayer(0, 0, player.vz*dt);
+  movePlayer(0, player.vy*dt, 0);
+  if (player.onGround && wasFalling < -18){
+    damage(Math.round((-wasFalling - 18) * 0.9), "Fall damage. The explosion was just the delivery system.");
+  }
+  if (player.y < -6) damage(20, "You fell out of the world.");
+}
+
+let prevT = performance.now();
+function frame(now){
+  const dt = Math.min(0.05, (now - prevT)/1000);
+  prevT = now;
+  update(dt);
+
+  // rebuild a few dirty chunks per frame so explosions don't stall the game
+  let rebuilt = 0;
+  for (const c of chunks){ if (c.dirty){ buildChunk(c); if (++rebuilt >= 3) break; } }
+
+  render();
+  requestAnimationFrame(frame);
+}
+
+const lineVBO = gl.createBuffer();
+const lineData = new Float32Array(24*3);
+const BOX_EDGES = [
+  [0,0,0, 1,0,0],[1,0,0, 1,0,1],[1,0,1, 0,0,1],[0,0,1, 0,0,0],
+  [0,1,0, 1,1,0],[1,1,0, 1,1,1],[1,1,1, 0,1,1],[0,1,1, 0,1,0],
+  [0,0,0, 0,1,0],[1,0,0, 1,1,0],[1,0,1, 1,1,1],[0,0,1, 0,1,1],
+];
+
+function render(){
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+  const aspect = canvas.width / Math.max(1, canvas.height);
+  const proj = mat4Perspective(1.28, aspect, 0.08, 220);
+  const sh = shake;
+  const eye = [
+    player.x + (Math.random()-0.5)*sh*0.6,
+    player.y + EYE + (Math.random()-0.5)*sh*0.6,
+    player.z + (Math.random()-0.5)*sh*0.6,
+  ];
+  const view = mat4View(eye, camDir(), [0,1,0]);
+  const mvp = mat4Mul(proj, view);
+
+  // --- terrain
+  gl.useProgram(terrainProg);
+  gl.uniformMatrix4fv(TL.uMVP, false, mvp);
+  gl.uniform3fv(TL.uEye, new Float32Array(eye));
+  gl.uniform3fv(TL.uFog, new Float32Array(SKY));
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.uniform1i(TL.uTex, 0);
+  gl.enableVertexAttribArray(TL.aPos);
+  gl.enableVertexAttribArray(TL.aUV);
+  gl.enableVertexAttribArray(TL.aLight);
+  for (const c of chunks){
+    if (!c.count) continue;
+    gl.bindBuffer(gl.ARRAY_BUFFER, c.vbo);
+    gl.vertexAttribPointer(TL.aPos,   3, gl.FLOAT, false, 24, 0);
+    gl.vertexAttribPointer(TL.aUV,    2, gl.FLOAT, false, 24, 12);
+    gl.vertexAttribPointer(TL.aLight, 1, gl.FLOAT, false, 24, 20);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, c.ibo);
+    gl.drawElements(gl.TRIANGLES, c.count, IDX_TYPE, 0);
+  }
+  gl.disableVertexAttribArray(TL.aUV);
+  gl.disableVertexAttribArray(TL.aLight);
+
+  // --- targeted block outline
+  const hit = paused ? null : raycast(6);
+  elCross.classList.toggle("hot", !!hit);
+  if (hit){
+    let k = 0;
+    for (const e of BOX_EDGES){
+      for (let p=0;p<2;p++){
+        lineData[k++] = hit.x - 0.004 + e[p*3+0]*1.008;
+        lineData[k++] = hit.y - 0.004 + e[p*3+1]*1.008;
+        lineData[k++] = hit.z - 0.004 + e[p*3+2]*1.008;
+      }
+    }
+    gl.useProgram(lineProg);
+    gl.uniformMatrix4fv(LL.uMVP, false, mvp);
+    const b = getBlock(hit.x, hit.y, hit.z);
+    gl.uniform4f(LL.uColor, b===TNT?1:0.05, b===TNT?0.3:0.05, 0.06, 1);
+    gl.bindBuffer(gl.ARRAY_BUFFER, lineVBO);
+    gl.bufferData(gl.ARRAY_BUFFER, lineData, gl.DYNAMIC_DRAW);
+    gl.enableVertexAttribArray(LL.aPos);
+    gl.vertexAttribPointer(LL.aPos, 3, gl.FLOAT, false, 0, 0);
+    gl.drawArrays(gl.LINES, 0, 24);
+  }
+
+  // --- particles
+  if (pCount){
+    gl.useProgram(partProg);
+    gl.uniformMatrix4fv(PL.uMVP, false, mvp);
+    gl.uniform1f(PL.uScale, canvas.height * 0.0016);
+    gl.bindBuffer(gl.ARRAY_BUFFER, pVBO);
+    gl.bufferData(gl.ARRAY_BUFFER, pPos.subarray(0, pCount*3), gl.DYNAMIC_DRAW);
+    gl.enableVertexAttribArray(PL.aPos);
+    gl.vertexAttribPointer(PL.aPos, 3, gl.FLOAT, false, 0, 0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, pCBO);
+    gl.bufferData(gl.ARRAY_BUFFER, pCol.subarray(0, pCount*3), gl.DYNAMIC_DRAW);
+    gl.enableVertexAttribArray(PL.aColor);
+    gl.vertexAttribPointer(PL.aColor, 3, gl.FLOAT, false, 0, 0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, pSBO);
+    gl.bufferData(gl.ARRAY_BUFFER, pSize.subarray(0, pCount), gl.DYNAMIC_DRAW);
+    gl.enableVertexAttribArray(PL.aSize);
+    gl.vertexAttribPointer(PL.aSize, 1, gl.FLOAT, false, 0, 0);
+    gl.drawArrays(gl.POINTS, 0, pCount);
+    gl.disableVertexAttribArray(PL.aColor);
+    gl.disableVertexAttribArray(PL.aSize);
+  }
+}
+
+// ------------------------------------------------------------- boot -------
+generateWorld();
+buildHotbar();
+respawn();
+resize();
+for (const c of chunks) buildChunk(c);
+updateHUD();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
