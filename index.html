@@ -127,7 +127,7 @@
 
 // ---------------------------------------------------------------- blocks ---
 const AIR=0, GRASS=1, DIRT=2, STONE=3, SAND=4, LOG=5, LEAVES=6, PLANKS=7,
-      COAL=8, IRON=9, DIAMOND=10, BEDROCK=11, COBBLE=12, GRAVEL=13, TNT=14;
+      COAL=8, IRON=9, DIAMOND=10, BEDROCK=11, COBBLE=12, GRAVEL=13, TNT=14, MEGA=15;
 
 // tiles: [top, bottom, side] indices into the 4x4 texture atlas
 const BLOCKS = {
@@ -145,6 +145,7 @@ const BLOCKS = {
   [COBBLE]: { name:"Cobble",  tiles:[13,13,13], color:[0.48,0.48,0.48] },
   [GRAVEL]: { name:"Gravel",  tiles:[14,14,14], color:[0.55,0.52,0.50] },
   [TNT]:    { name:"TNT",     tiles:[15,15,15], color:[0.85,0.20,0.15] },
+  [MEGA]:   { name:"GIANT TNT", tiles:[16,16,16], color:[0.60,0.10,0.75] },
 };
 const isSolid = b => b !== AIR;
 
@@ -248,10 +249,10 @@ function generateWorld(){
 
 // ------------------------------------------------------------- texture -----
 // Procedural 4x4 atlas of 32px tiles, drawn once into a canvas.
-const TILE=32, ATLAS=TILE*4;
+const TILE=32, ATLAS=TILE*4, ROWS=8;
 function buildAtlas(){
   const c = document.createElement("canvas");
-  c.width = c.height = ATLAS;
+  c.width = ATLAS; c.height = TILE*ROWS;
   const g = c.getContext("2d");
   const px = (t,x,y,col)=>{ g.fillStyle=col; g.fillRect((t%4)*TILE+x, Math.floor(t/4)*TILE+y, 1, 1); };
   const rect = (t,x,y,w,h,col)=>{ g.fillStyle=col; g.fillRect((t%4)*TILE+x, Math.floor(t/4)*TILE+y, w, h); };
@@ -331,6 +332,13 @@ function buildAtlas(){
   rect(15, 0, 21, TILE, 1, "rgb(150,150,146)");
   g.fillStyle = "rgb(40,40,44)"; g.font = "bold 11px monospace"; g.textAlign="center";
   g.fillText("TNT", 3*TILE+16, 3*TILE+20);
+  // 16 GIANT TNT - blows up the whole world
+  noisy(16, 120,20,150, 26);
+  rect(16, 0, 9, TILE, 14, "rgb(20,20,24)");
+  rect(16, 0, 9, TILE, 1, "rgb(255,200,40)");
+  rect(16, 0, 22, TILE, 1, "rgb(255,200,40)");
+  g.fillStyle = "rgb(255,200,40)"; g.font = "bold 9px monospace";
+  g.fillText("GIANT", 0*TILE+16, 4*TILE+19);
   return c;
 }
 
@@ -531,7 +539,7 @@ function buildChunk(ch){
       if (verts + 4 > MAX_VERTS) break;   // safety: index-size cap
 
       const t = def.tiles[F.tile];
-      const tx = (t%4)/4, ty = Math.floor(t/4)/4;
+      const tx = (t%4)/4, ty = Math.floor(t/4)/ROWS;
       const u = F.u, v = F.v, n = F.n;
 
       for (let k=0; k<4; k++){
@@ -547,7 +555,7 @@ function buildChunk(ch){
         vertScratch[vi++] = z + 0.5 + 0.5*(n[2] + u[2]*du + v[2]*dv);
         const un = du > 0 ? 1 : 0, vn = dv > 0 ? 1 : 0;
         vertScratch[vi++] = tx + (un ? 0.25-EPS : EPS);
-        vertScratch[vi++] = ty + (vn ? EPS : 0.25-EPS);
+        vertScratch[vi++] = ty + (vn ? EPS : 1/ROWS-EPS);
         vertScratch[vi++] = F.light * AO_LIGHT[ao];
       }
       idxScratch[ii++]=verts;   idxScratch[ii++]=verts+1; idxScratch[ii++]=verts+2;
@@ -614,9 +622,9 @@ const player = {
 };
 const EYE = 1.62, PW = 0.32, PH = 1.8;
 
-const inventory = { [PLANKS]:32, [TNT]:5 };
+const inventory = { [PLANKS]:32, [TNT]:5, [MEGA]:1 };
 const loot = { [COAL]:0, [IRON]:0, [DIAMOND]:0 };
-const HOTBAR = [GRASS, DIRT, STONE, COBBLE, SAND, LOG, PLANKS, LEAVES, TNT];
+const HOTBAR = [GRASS, DIRT, STONE, COBBLE, SAND, LOG, PLANKS, LEAVES, TNT, MEGA];
 let selected = 6;
 const stats = { mined:0, booms:0, streak:0, best:0 };
 
@@ -625,6 +633,12 @@ function surfaceY(x,z){
   return 1;
 }
 function respawn(){
+  if (worldGone){
+    worldGone = false;
+    generateWorld();
+    for (const c of chunks) c.dirty = true;
+    inventory[MEGA] = 1;
+  }
   const sx = Math.floor(SPAWN.x), sz = Math.floor(SPAWN.z);
   player.x = sx+0.5; player.z = sz+0.5;
   player.y = surfaceY(sx,sz) + 0.2;
@@ -749,6 +763,7 @@ function explode(cx, cy, cz, power){
     world[vidx(x,y,z)] = AIR;
     dirtyAround(x,z);
     if (Math.random() < 0.5) blockParticles(x,y,z,b, 2, 6);
+    if (b === MEGA) endTheWorld();
     if (b === TNT) pendingBooms.push({ x, y, z, power:R, t: 0.12 + Math.random()*0.25 });
   }
 
@@ -771,6 +786,34 @@ function explode(cx, cy, cz, power){
   } else {
     shake = Math.max(shake, Math.max(0, 0.5 - pd/60));
   }
+}
+
+// ------------------------------------------------------------- giant TNT --
+let worldGone = false;
+function endTheWorld(){
+  if (worldGone) return;
+  worldGone = true;
+  toast("GIANT TNT!!! THE WHOLE WORLD IS GOING!", "#d98cff");
+  // three booms, one after another
+  [0, 350, 800].forEach(ms => setTimeout(()=>{ sfxBoom(0); boomFlash(1); shake = 1.4; }, ms));
+  for (let i=0;i<600;i++){
+    const a = Math.random()*Math.PI*2, s = 4 + Math.random()*20;
+    spawnParticle(player.x + (Math.random()-0.5)*40, player.y + Math.random()*10, player.z + (Math.random()-0.5)*40,
+      Math.cos(a)*s, Math.random()*18, Math.sin(a)*s,
+      1.0, 0.3+Math.random()*0.5, Math.random()*0.8, 8+Math.random()*12, 1+Math.random()*1.5);
+  }
+  // everything goes except bedrock
+  for (let i=0;i<world.length;i++) if (world[i] !== BEDROCK) world[i] = AIR;
+  pendingBooms.length = 0;
+  for (const c of chunks) c.dirty = true;
+  player.fly = false;
+  setTimeout(()=>{
+    player.hp = 0; player.dead = true;
+    document.getElementById("deathMsg").textContent = "You blew up THE ENTIRE WORLD. Respawn for a brand new one.";
+    document.getElementById("deadOverlay").classList.remove("hidden");
+    exitPointerLock();
+    updateHUD();
+  }, 2500);
 }
 
 // ------------------------------------------------------------- raycast ----
@@ -810,6 +853,8 @@ function mine(){
   const b = getBlock(hit.x, hit.y, hit.z);
   if (b === AIR) return;
   if (b === BEDROCK){ toast("bedrock doesn't care", "#9fb2c9"); sfxDig(); return; }
+
+  if (b === MEGA){ world[vidx(hit.x, hit.y, hit.z)] = AIR; endTheWorld(); return; }
 
   stats.mined++;
   const isTNT = (b === TNT);
@@ -905,7 +950,7 @@ function buildHotbar(){
     const d = document.createElement("div");
     d.className = "slot";
     d.appendChild(tileIcon(b));
-    const k = document.createElement("div"); k.className="k"; k.textContent = i+1; d.appendChild(k);
+    const k = document.createElement("div"); k.className="k"; k.textContent = (i+1)%10; d.appendChild(k);
     const n = document.createElement("div"); n.className="n"; d.appendChild(n);
     d.title = BLOCKS[b].name;
     elHotbar.appendChild(d);
@@ -961,6 +1006,7 @@ addEventListener("keydown", e => {
   if (e.code.startsWith("Digit")){
     const n = parseInt(e.code.slice(5),10);
     if (n >= 1 && n <= 9){ selected = n-1; updateHUD(); }
+    if (n === 0){ selected = 9; updateHUD(); }
   }
   if (["Space","ArrowUp","ArrowDown","ArrowLeft","ArrowRight"].includes(e.code)) e.preventDefault();
 });
