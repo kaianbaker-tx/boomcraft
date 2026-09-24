@@ -984,6 +984,7 @@ function updateHUD(){
 const keys = {};
 let paused = true;
 let lastSpaceTap = 0;
+let lastMiddleClick = 0;
 
 function toggleFly(){
   player.fly = !player.fly;
@@ -1026,6 +1027,13 @@ canvas.addEventListener("mousedown", e => {
   lockPointer();
   if (e.button === 0) mine();
   else if (e.button === 2) place();
+  else if (e.button === 1){
+    // double-click the middle mouse button to use the item
+    e.preventDefault();
+    const now = performance.now();
+    if (now - lastMiddleClick < 400){ place(); lastMiddleClick = 0; }
+    else lastMiddleClick = now;
+  }
 });
 canvas.addEventListener("contextmenu", e => e.preventDefault());
 
