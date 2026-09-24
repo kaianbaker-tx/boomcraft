@@ -985,6 +985,7 @@ const keys = {};
 let paused = true;
 let lastSpaceTap = 0;
 let lastMiddleClick = 0;
+let lastArrow = "", lastArrowTap = 0;
 
 function toggleFly(){
   player.fly = !player.fly;
@@ -1004,6 +1005,16 @@ addEventListener("keydown", e => {
     else lastSpaceTap = now;
   }
   if (e.code === "KeyF" && !paused) toggleFly();
+  // double-tap left or right arrow: move along your inventory
+  if ((e.code === "ArrowLeft" || e.code === "ArrowRight") && !wasDown && !paused){
+    const now = performance.now();
+    if (e.code === lastArrow && now - lastArrowTap < 340){
+      const step = e.code === "ArrowRight" ? 1 : -1;
+      selected = (selected + step + HOTBAR.length) % HOTBAR.length;
+      updateHUD(); blip(500, 0.05, "triangle", 0.06);
+      lastArrowTap = 0;
+    } else { lastArrow = e.code; lastArrowTap = now; }
+  }
   if (e.code.startsWith("Digit")){
     const n = parseInt(e.code.slice(5),10);
     if (n >= 1 && n <= 9){ selected = n-1; updateHUD(); }
