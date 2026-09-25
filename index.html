@@ -55,6 +55,8 @@
   #flash { position:absolute; inset:0; background:radial-gradient(ellipse at center, transparent 35%, rgba(255,0,0,.85) 100%);
            opacity:0; transition:opacity .35s ease; }
   #boomflash { position:absolute; inset:0; background:#fff3c4; opacity:0; }
+  #lavatint { position:absolute; inset:0; background:radial-gradient(ellipse at center, rgba(255,140,20,.55) 0%, rgba(200,40,0,.95) 100%);
+              opacity:0; transition:opacity .15s ease; }
 
   /* overlays */
   .overlay { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center;
@@ -75,11 +77,12 @@
 <canvas id="gl"></canvas>
 
 <div id="hud">
+  <div id="lavatint"></div>
   <div id="stats">
     mined <b id="sMined">0</b> · booms <b id="sBooms">0</b><br>
     safe streak <span id="streak">0</span> · best <span id="sBest">0</span><br>
     <span id="lootLine" style="opacity:.75">coal 0 · iron 0 · <span style="color:#7ff0f7">diamond 0</span></span><br>
-    <span style="opacity:.6">every block: 50% BOOM</span>
+    <span id="rule" style="opacity:.6">every block: 50% BOOM</span>
   </div>
   <div id="cross"></div>
   <div id="toasts"></div>
@@ -100,8 +103,10 @@
       <span>Space</span><span>jump</span>
       <span>1-9 / scroll</span><span>pick block</span>
       <span>Space x2 / F</span><span>fly (again = you drop)</span>
+      <span>P</span><span>TNT pickaxe (it's in the TNT village!)</span>
       <span>Esc</span><span>pause</span>
     </div>
+    <div class="sub" style="font-size:13px;color:#ff9f43">Oh, and never dig straight down. There's lava.</div>
     <button class="btn" id="startBtn">CLICK TO PLAY</button>
   </div>
 
@@ -127,7 +132,8 @@
 
 // ---------------------------------------------------------------- blocks ---
 const AIR=0, GRASS=1, DIRT=2, STONE=3, SAND=4, LOG=5, LEAVES=6, PLANKS=7,
-      COAL=8, IRON=9, DIAMOND=10, BEDROCK=11, COBBLE=12, GRAVEL=13, TNT=14, MEGA=15;
+      COAL=8, IRON=9, DIAMOND=10, BEDROCK=11, COBBLE=12, GRAVEL=13, TNT=14, MEGA=15,
+      LAVA=16, PICKBOX=17, PICK=18;   // PICK is the TNT pickaxe: it lives in your hotbar, never in the world
 
 // tiles: [top, bottom, side] indices into the 4x4 texture atlas
 const BLOCKS = {
@@ -146,8 +152,12 @@ const BLOCKS = {
   [GRAVEL]: { name:"Gravel",  tiles:[14,14,14], color:[0.55,0.52,0.50] },
   [TNT]:    { name:"TNT",     tiles:[15,15,15], color:[0.85,0.20,0.15] },
   [MEGA]:   { name:"GIANT TNT", tiles:[16,16,16], color:[0.60,0.10,0.75] },
+  [LAVA]:   { name:"Lava",    tiles:[17,17,17], color:[1.00,0.45,0.08] },
+  [PICKBOX]:{ name:"TNT Pickaxe Box", tiles:[18,18,18], color:[0.95,0.75,0.20] },
+  [PICK]:   { name:"TNT Pickaxe", tiles:[19,19,19], color:[0.85,0.20,0.15] },
 };
 const isSolid = b => b !== AIR;
+const ORES = new Set([COAL, IRON, DIAMOND]);
 
 // ---------------------------------------------------------------- world ----
 const WX=80, WY=52, WZ=80;          // world size in blocks
@@ -171,7 +181,8 @@ function isBlocking(x,y,z){
   if (x<0||x>=WX||z<0||z>=WZ) return true;
   if (y<0) return true;
   if (y>=WY) return false;
-  return world[vidx(x,y,z)] !== AIR;
+  const b = world[vidx(x,y,z)];
+  return b !== AIR && b !== LAVA;     // you sink into lava instead of standing on it
 }
 
 // ------------------------------------------------------------- generation --
@@ -195,15 +206,18 @@ function fbm(x,z){
 }
 
 const SEA = 18;
+const LAVA_TOP = 3;   // y=1 up to here is one big lava lake. never dig straight down!
+function terrainHeight(x,z){
+  const n = fbm(x*0.035+10.5, z*0.035+4.5);
+  const hills = fbm(x*0.011, z*0.011);
+  const h = Math.floor(SEA + 2 + n*13 + hills*10);
+  return Math.max(LAVA_TOP+8, Math.min(WY-8, h));
+}
 function generateWorld(){
   world.fill(AIR);
   for (let x=0;x<WX;x++){
     for (let z=0;z<WZ;z++){
-      const n = fbm(x*0.035+10.5, z*0.035+4.5);
-      const hills = fbm(x*0.011, z*0.011);
-      let h = Math.floor(SEA + 2 + n*13 + hills*10);
-      if (h < 3) h = 3;
-      if (h > WY-8) h = WY-8;
+      const h = terrainHeight(x,z);
       // low ground and patchy dunes get sand instead of grass
       const beach = h <= SEA+2 || fbm(x*0.02+70.5, z*0.02+31.5) > 0.665;
       for (let y=0;y<=h;y++){
@@ -229,6 +243,8 @@ function generateWorld(){
         const c = fbm(x*0.09+y*0.13, z*0.09-y*0.07);
         if (c > 0.66 && y < h-3) world[vidx(x,y,z)] = AIR;
       }
+      // the lava lake under everything
+      for (let y=1;y<=LAVA_TOP;y++) world[vidx(x,y,z)] = LAVA;
       // trees
       if (!beach && rnd() < 0.012 && x>2 && z>2 && x<WX-3 && z<WZ-3 &&
           world[vidx(x,h,z)] === GRASS){
@@ -245,6 +261,54 @@ function generateWorld(){
       }
     }
   }
+  buildVillage();
+}
+
+// ------------------------------------------------------------- TNT village --
+// Right in front of where you spawn. Four TNT houses around a plaza,
+// and the TNT pickaxe waiting on a gold box in the middle.
+const VILLAGE = { x: 40, z: 16 };
+const PLAZA = 11, BLEND = 5;   // flat plaza, then a ramp back to normal ground
+function buildVillage(){
+  const cx = VILLAGE.x, cz = VILLAGE.z;
+  const H = terrainHeight(cx, cz);
+  const R = PLAZA + BLEND;
+  // flatten the ground (and knock down any trees in the way)
+  for (let x=cx-R; x<=cx+R; x++) for (let z=cz-R; z<=cz+R; z++){
+    if (x<0||x>=WX||z<0||z>=WZ) continue;
+    const d = Math.max(Math.abs(x-cx), Math.abs(z-cz));
+    const h = terrainHeight(x,z);
+    const t = d <= PLAZA ? 0 : (d-PLAZA)/BLEND;
+    const top = Math.round(H*(1-t) + h*t);
+    for (let y=Math.min(top-3, h); y<WY; y++){
+      world[vidx(x,y,z)] = y > top ? AIR : y === top ? GRASS : y >= top-3 ? DIRT : STONE;
+    }
+  }
+  const put = (x,y,z,b)=>{ if (x>=0&&x<WX&&z>=0&&z<WZ&&y>0&&y<WY) world[vidx(x,y,z)] = b; };
+  // gravel paths from the middle out to each door
+  for (let i=-6;i<=6;i++){ put(cx+i, H, cz, GRAVEL); put(cx, H, cz+i, GRAVEL); }
+  // four TNT houses, doors facing the middle
+  for (const [dx,dz] of [[0,-9],[0,9],[-9,0],[9,0]]) buildHouse(cx+dx, cz+dz, H, -Math.sign(dx), -Math.sign(dz));
+  // the pedestal with the TNT pickaxe on top
+  put(cx, H+1, cz, COBBLE);
+  put(cx, H+2, cz, PICKBOX);
+}
+function buildHouse(hx, hz, H, ddx, ddz){
+  const put = (x,y,z,b)=>{ if (x>=0&&x<WX&&z>=0&&z<WZ&&y>0&&y<WY) world[vidx(x,y,z)] = b; };
+  for (let dx=-2; dx<=2; dx++) for (let dz=-2; dz<=2; dz++){
+    const edge = Math.abs(dx)===2 || Math.abs(dz)===2;
+    const corner = Math.abs(dx)===2 && Math.abs(dz)===2;
+    for (let y=H+1; y<=H+3; y++) put(hx+dx, y, hz+dz, !edge ? AIR : (corner ? LOG : TNT));
+    put(hx+dx, H+4, hz+dz, PLANKS);                                    // roof
+    if (Math.abs(dx)<=1 && Math.abs(dz)<=1) put(hx+dx, H+5, hz+dz, TNT); // TNT on the roof too
+  }
+  put(hx, H+6, hz, TNT);
+  // door facing the plaza
+  put(hx+ddx*2, H+1, hz+ddz*2, AIR);
+  put(hx+ddx*2, H+2, hz+ddz*2, AIR);
+  // windows on the two side walls
+  put(hx+ddz*2, H+2, hz+ddx*2, AIR);
+  put(hx-ddz*2, H+2, hz-ddx*2, AIR);
 }
 
 // ------------------------------------------------------------- texture -----
@@ -339,6 +403,34 @@ function buildAtlas(){
   rect(16, 0, 22, TILE, 1, "rgb(255,200,40)");
   g.fillStyle = "rgb(255,200,40)"; g.font = "bold 9px monospace";
   g.fillText("GIANT", 0*TILE+16, 4*TILE+19);
+  // 17 lava
+  noisy(17, 226,92,18, 40);
+  blobs(17, "rgb(255,196,48)", 6, 6);
+  blobs(17, "rgb(150,30,10)", 4, 4);
+  // the TNT pickaxe, drawn onto tile t
+  const drawPick = (t)=>{
+    const ox = (t%4)*TILE, oy = Math.floor(t/4)*TILE;
+    g.save(); g.beginPath(); g.rect(ox, oy, TILE, TILE); g.clip();
+    g.lineCap = "square";
+    g.strokeStyle = "rgb(60,36,16)"; g.lineWidth = 6;             // handle
+    g.beginPath(); g.moveTo(ox+6, oy+27); g.lineTo(ox+20, oy+13); g.stroke();
+    g.strokeStyle = "rgb(150,98,48)"; g.lineWidth = 3;
+    g.beginPath(); g.moveTo(ox+6, oy+27); g.lineTo(ox+20, oy+13); g.stroke();
+    g.strokeStyle = "rgb(60,10,8)"; g.lineWidth = 8;              // TNT head
+    g.beginPath(); g.arc(ox+13, oy+20, 15, -Math.PI*0.62, -Math.PI*0.08); g.stroke();
+    g.strokeStyle = "rgb(214,44,34)"; g.lineWidth = 5;
+    g.beginPath(); g.arc(ox+13, oy+20, 15, -Math.PI*0.62, -Math.PI*0.08); g.stroke();
+    g.strokeStyle = "rgb(240,240,232)"; g.lineWidth = 2;           // white TNT stripe
+    g.beginPath(); g.arc(ox+13, oy+20, 15, -Math.PI*0.44, -Math.PI*0.26); g.stroke();
+    g.restore();
+  };
+  // 18 gold box with the pickaxe on it
+  noisy(18, 232,182,48, 26);
+  rect(18, 0, 0, TILE, 2, "rgb(150,96,20)"); rect(18, 0, TILE-2, TILE, 2, "rgb(150,96,20)");
+  rect(18, 0, 0, 2, TILE, "rgb(150,96,20)"); rect(18, TILE-2, 0, 2, TILE, "rgb(150,96,20)");
+  drawPick(18);
+  // 19 the pickaxe by itself (hotbar icon)
+  drawPick(19);
   return c;
 }
 
@@ -556,7 +648,7 @@ function buildChunk(ch){
         const un = du > 0 ? 1 : 0, vn = dv > 0 ? 1 : 0;
         vertScratch[vi++] = tx + (un ? 0.25-EPS : EPS);
         vertScratch[vi++] = ty + (vn ? EPS : 1/ROWS-EPS);
-        vertScratch[vi++] = F.light * AO_LIGHT[ao];
+        vertScratch[vi++] = b === LAVA ? 1.0 : F.light * AO_LIGHT[ao];   // lava glows
       }
       idxScratch[ii++]=verts;   idxScratch[ii++]=verts+1; idxScratch[ii++]=verts+2;
       idxScratch[ii++]=verts;   idxScratch[ii++]=verts+2; idxScratch[ii++]=verts+3;
@@ -757,7 +849,7 @@ function explode(cx, cy, cz, power){
   for (let y=cy-r; y<=cy+r; y++)
   for (let z=cz-r; z<=cz+r; z++){
     const b = getBlock(x,y,z);
-    if (b === AIR || b === BEDROCK) continue;
+    if (b === AIR || b === BEDROCK || b === LAVA || b === PICKBOX) continue;
     const d = Math.hypot(x-cx, y-cy, z-cz);
     if (d > R * (0.72 + Math.random()*0.5)) continue;
     world[vidx(x,y,z)] = AIR;
@@ -833,7 +925,8 @@ function raycast(maxD){
   ];
   let nx=0, ny=0, nz=0, t=0;
   for (let i=0;i<160;i++){
-    if (getBlock(x,y,z) !== AIR) return { x,y,z, nx,ny,nz };
+    const hb = getBlock(x,y,z);
+    if (hb !== AIR && hb !== LAVA) return { x,y,z, nx,ny,nz };   // you can't mine lava, you aim through it
     if (tMax[0] < tMax[1] && tMax[0] < tMax[2]) { t=tMax[0]; x+=step[0]; tMax[0]+=tDelta[0]; nx=-step[0]; ny=0; nz=0; }
     else if (tMax[1] < tMax[2])                 { t=tMax[1]; y+=step[1]; tMax[1]+=tDelta[1]; nx=0; ny=-step[1]; nz=0; }
     else                                        { t=tMax[2]; z+=step[2]; tMax[2]+=tDelta[2]; nx=0; ny=0; nz=-step[2]; }
@@ -846,6 +939,20 @@ function raycast(maxD){
 const BOOM_CHANCE = 0.5;
 const LUCKY_LINES = ["phew.", "clean break!", "no boom!", "safe!", "nice.", "still alive."];
 const BOOM_LINES  = ["BOOM!", "KABOOM!", "THAT ONE WAS A BOMB", "OOPS", "50/50 SAYS NO"];
+const PICK_BOOM_LINES = ["TNT PICKAXE!", "KA-BLAM!", "that wasn't ore...", "PICKAXE GO BOOM"];
+
+const holdingPick = () => HOTBAR[selected] === PICK && inventory[PICK] > 0;
+
+function getPickaxe(){
+  if (inventory[PICK]){ toast("you already have the TNT pickaxe", "#ffe08a"); sfxDig(); return; }
+  inventory[PICK] = 1;
+  HOTBAR.push(PICK);
+  buildHotbar();
+  selected = HOTBAR.length - 1;
+  toast("YOU GOT THE TNT PICKAXE!", "#ff8a3d");
+  sfxJackpot();
+  setTimeout(()=> toast("ore = safe. anything else = BOOM. press P", "#ffe08a"), 1300);
+}
 
 function mine(){
   const hit = raycast(6);
@@ -856,9 +963,20 @@ function mine(){
 
   if (b === MEGA){ world[vidx(hit.x, hit.y, hit.z)] = AIR; endTheWorld(); return; }
 
+  if (b === PICKBOX){
+    world[vidx(hit.x, hit.y, hit.z)] = AIR;
+    dirtyAround(hit.x, hit.z);
+    blockParticles(hit.x, hit.y, hit.z, b, 24, 4);
+    getPickaxe();
+    updateHUD();
+    return;
+  }
+
   stats.mined++;
   const isTNT = (b === TNT);
-  const boom = isTNT || Math.random() < BOOM_CHANCE;
+  const pick = holdingPick();
+  // TNT pickaxe: ore never explodes, everything else ALWAYS explodes like TNT
+  const boom = pick ? !ORES.has(b) : (isTNT || Math.random() < BOOM_CHANCE);
 
   world[vidx(hit.x, hit.y, hit.z)] = AIR;
   dirtyAround(hit.x, hit.z);
@@ -867,8 +985,9 @@ function mine(){
     stats.booms++;
     if (stats.streak > stats.best) stats.best = stats.streak;
     stats.streak = 0;
-    explode(hit.x, hit.y, hit.z, isTNT ? 3.4 : 2.7);
-    toast(isTNT ? "TNT — that one was never 50/50" : BOOM_LINES[(Math.random()*BOOM_LINES.length)|0], "#ff8a3d");
+    explode(hit.x, hit.y, hit.z, (isTNT || pick) ? 3.4 : 2.7);
+    toast(pick ? PICK_BOOM_LINES[(Math.random()*PICK_BOOM_LINES.length)|0]
+        : isTNT ? "TNT — that one was never 50/50" : BOOM_LINES[(Math.random()*BOOM_LINES.length)|0], "#ff8a3d");
   } else {
     blockParticles(hit.x, hit.y, hit.z, b, 14, 3.5);
     sfxDig();
@@ -891,12 +1010,13 @@ function place(){
   const hit = raycast(6);
   if (!hit) return;
   const type = HOTBAR[selected];
+  if (type === PICK){ toast("that's your pickaxe! left click to mine", "#ffe08a"); return; }
   if (!(inventory[type] > 0)){ toast("out of " + BLOCKS[type].name, "#ff9d9d"); return; }
   const x = hit.x + hit.nx, y = hit.y + hit.ny, z = hit.z + hit.nz;
   if (x<0||x>=WX||y<0||y>=WY||z<0||z>=WZ) return;
-  if (getBlock(x,y,z) !== AIR) return;
+  const oldB = getBlock(x,y,z);
+  if (oldB !== AIR && oldB !== LAVA) return;   // blocks can go into lava, so you can climb out
   // don't seal yourself inside a block
-  const oldB = AIR;
   world[vidx(x,y,z)] = type;
   if (playerBoxCollides(player.x, player.y, player.z)){ world[vidx(x,y,z)] = oldB; return; }
   dirtyAround(x,z);
@@ -950,7 +1070,7 @@ function buildHotbar(){
     const d = document.createElement("div");
     d.className = "slot";
     d.appendChild(tileIcon(b));
-    const k = document.createElement("div"); k.className="k"; k.textContent = (i+1)%10; d.appendChild(k);
+    const k = document.createElement("div"); k.className="k"; k.textContent = b === PICK ? "P" : (i+1)%10; d.appendChild(k);
     const n = document.createElement("div"); n.className="n"; d.appendChild(n);
     d.title = BLOCKS[b].name;
     elHotbar.appendChild(d);
@@ -969,8 +1089,10 @@ function updateHUD(){
     const b = HOTBAR[i], n = inventory[b]||0;
     slot.classList.toggle("sel", i === selected);
     slot.classList.toggle("zero", n === 0);
-    slot.querySelector(".n").textContent = n > 0 ? n : "";
+    slot.querySelector(".n").textContent = n > 0 && b !== PICK ? n : "";
   });
+  document.getElementById("rule").textContent =
+    holdingPick() ? "TNT pickaxe: ore safe, rest BOOM" : "every block: 50% BOOM";
 
   document.getElementById("sMined").textContent = stats.mined;
   document.getElementById("sBooms").textContent = stats.booms;
@@ -1005,6 +1127,10 @@ addEventListener("keydown", e => {
     else lastSpaceTap = now;
   }
   if (e.code === "KeyF" && !paused) toggleFly();
+  if (e.code === "KeyP" && !paused){
+    if (inventory[PICK]){ selected = HOTBAR.indexOf(PICK); updateHUD(); blip(500, 0.05, "triangle", 0.06); }
+    else toast("find the TNT pickaxe in the TNT village!", "#ffe08a");
+  }
   // double-tap left or right arrow: move along your inventory
   if ((e.code === "ArrowLeft" || e.code === "ArrowRight") && !wasDown && !paused){
     const now = performance.now();
@@ -1100,6 +1226,21 @@ function resize(){
 }
 addEventListener("resize", resize);
 
+// ------------------------------------------------------------- lava -------
+let lavaBurn = 0, villageFound = false, lavaTint = 0;
+const elLavaTint = document.getElementById("lavatint");
+function lavaAt(y){ return getBlock(Math.floor(player.x), Math.floor(y), Math.floor(player.z)) === LAVA; }
+function setLavaTint(v){ if (v !== lavaTint){ lavaTint = v; elLavaTint.style.opacity = v; } }
+// little sparks popping off any lava you can see near you
+function lavaSparks(){
+  for (let i=0;i<6;i++){
+    const x = Math.floor(player.x + (Math.random()-0.5)*24), z = Math.floor(player.z + (Math.random()-0.5)*24);
+    if (getBlock(x, LAVA_TOP, z) !== LAVA || getBlock(x, LAVA_TOP+1, z) !== AIR) continue;
+    spawnParticle(x+Math.random(), LAVA_TOP+1.05, z+Math.random(), (Math.random()-0.5)*1.5, 2.5+Math.random()*3, (Math.random()-0.5)*1.5,
+      1.0, 0.5+Math.random()*0.4, 0.1, 3+Math.random()*3, 0.4+Math.random()*0.5);
+  }
+}
+
 function update(dt){
   // queued chain-reaction TNT
   for (let i=pendingBooms.length-1; i>=0; i--){
@@ -1109,9 +1250,28 @@ function update(dt){
   }
   updateParticles(dt);
   shake = Math.max(0, shake - dt*2.2);
+  lavaSparks();
   if (paused || player.dead) return;
 
-  const speed = (keys.ShiftLeft||keys.ShiftRight ? 9.5 : 5.2) * (player.fly ? 2.2 : 1);
+  const inLava = lavaAt(player.y + 0.1) || lavaAt(player.y + 1.0);
+  setLavaTint(lavaAt(player.y + EYE) ? 1 : inLava ? 0.35 : 0);
+  if (inLava){
+    lavaBurn -= dt;
+    if (lavaBurn <= 0){
+      lavaBurn = 0.5;
+      damage(2, "You dug straight down... into LAVA. Never dig straight down!");
+    }
+    for (let i=0;i<3;i++) spawnParticle(player.x+(Math.random()-0.5)*0.8, player.y+Math.random()*1.8, player.z+(Math.random()-0.5)*0.8,
+      (Math.random()-0.5)*2, 3+Math.random()*3, (Math.random()-0.5)*2, 1.0, 0.4+Math.random()*0.4, 0.05, 4+Math.random()*4, 0.3+Math.random()*0.4);
+  } else lavaBurn = 0;
+
+  if (!villageFound && Math.hypot(player.x-VILLAGE.x-0.5, player.z-VILLAGE.z-0.5) < PLAZA+2){
+    villageFound = true;
+    toast("WELCOME TO THE TNT VILLAGE!", "#ff5a3d");
+    setTimeout(()=> toast("the TNT pickaxe is in the middle", "#ffe08a"), 1300);
+  }
+
+  const speed = (keys.ShiftLeft||keys.ShiftRight ? 9.5 : 5.2) * (player.fly ? 2.2 : 1) * (inLava ? 0.4 : 1);
   let fx=0, fz=0;
   if (keys.KeyW || keys.ArrowUp) fz += 1;
   if (keys.KeyS || keys.ArrowDown) fz -= 1;
@@ -1133,6 +1293,11 @@ function update(dt){
     if (keys.Space) vy += speed;
     if (keys.ShiftLeft) vy -= speed;
     player.vy = vy;
+  } else if (inLava){
+    // lava is thick: you sink slowly. space swims up, and near the top it pops you out
+    player.vy -= 6 * dt;
+    if (player.vy < -2.5) player.vy = -2.5;
+    if (keys.Space) player.vy = Math.max(player.vy, lavaAt(player.y + 1.2) ? 3.5 : 8.5);
   } else {
     player.vy -= 28 * dt;
     if (player.vy < -55) player.vy = -55;
@@ -1224,7 +1389,9 @@ function render(){
     gl.useProgram(lineProg);
     gl.uniformMatrix4fv(LL.uMVP, false, mvp);
     const b = getBlock(hit.x, hit.y, hit.z);
-    gl.uniform4f(LL.uColor, b===TNT?1:0.05, b===TNT?0.3:0.05, 0.06, 1);
+    // holding the TNT pickaxe: green = safe ore, red = this one goes boom
+    if (holdingPick()) gl.uniform4f(LL.uColor, ORES.has(b)?0.1:1, ORES.has(b)?0.95:0.25, ORES.has(b)?0.3:0.06, 1);
+    else gl.uniform4f(LL.uColor, b===TNT?1:0.05, b===TNT?0.3:0.05, 0.06, 1);
     gl.bindBuffer(gl.ARRAY_BUFFER, lineVBO);
     gl.bufferData(gl.ARRAY_BUFFER, lineData, gl.DYNAMIC_DRAW);
     gl.enableVertexAttribArray(LL.aPos);
