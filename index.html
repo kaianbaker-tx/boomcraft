@@ -96,7 +96,7 @@
       <span>WASD</span><span>move</span>
       <span>Mouse</span><span>look</span>
       <span>Left click</span><span>MINE (coin flip!)</span>
-      <span>Right click</span><span>place block</span>
+      <span>Right click / &darr;</span><span>place block</span>
       <span>Space</span><span>jump</span>
       <span>1-9 / scroll</span><span>pick block</span>
       <span>Space x2 / F</span><span>fly (again = you drop)</span>
@@ -1005,6 +1005,8 @@ addEventListener("keydown", e => {
     else lastSpaceTap = now;
   }
   if (e.code === "KeyF" && !paused) toggleFly();
+  // down arrow: place the block you are holding
+  if (e.code === "ArrowDown" && !wasDown && !paused && !player.dead) place();
   // double-tap left or right arrow: move along your inventory
   if ((e.code === "ArrowLeft" || e.code === "ArrowRight") && !wasDown && !paused){
     const now = performance.now();
@@ -1114,7 +1116,7 @@ function update(dt){
   const speed = (keys.ShiftLeft||keys.ShiftRight ? 9.5 : 5.2) * (player.fly ? 2.2 : 1);
   let fx=0, fz=0;
   if (keys.KeyW || keys.ArrowUp) fz += 1;
-  if (keys.KeyS || keys.ArrowDown) fz -= 1;
+  if (keys.KeyS) fz -= 1;
   if (keys.KeyA || keys.ArrowLeft) fx -= 1;
   if (keys.KeyD || keys.ArrowRight) fx += 1;
   const len = Math.hypot(fx,fz);
