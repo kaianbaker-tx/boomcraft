@@ -245,6 +245,30 @@ function generateWorld(){
       }
     }
   }
+  buildTntVillage();
+}
+
+// ------------------------------------------------------------ TNT village --
+// a little village where every house is made of TNT. what could go wrong?
+const VILLAGE = [ [40,54], [48,58], [32,58], [44,66], [36,66] ];
+function buildTntVillage(){
+  for (const [hx,hz] of VILLAGE){
+    let floor = 0;
+    for (let dx=-1;dx<=5;dx++) for (let dz=-1;dz<=5;dz++) floor = Math.max(floor, surfaceY(hx+dx,hz+dz));
+    for (let dx=-1;dx<=5;dx++) for (let dz=-1;dz<=5;dz++){
+      const x=hx+dx, z=hz+dz;
+      for (let y=1;y<floor;y++) if (world[vidx(x,y,z)] === AIR) world[vidx(x,y,z)] = DIRT;
+      world[vidx(x,floor-1,z)] = GRASS;
+      for (let y=floor;y<WY;y++) world[vidx(x,y,z)] = AIR;
+    }
+    for (let dx=0;dx<5;dx++) for (let dz=0;dz<5;dz++) for (let dy=0;dy<5;dy++){
+      const wall = dx===0 || dx===4 || dz===0 || dz===4;
+      const roof = dy===4;
+      const door = dz===0 && dx===2 && dy<2;
+      const window_ = dy===2 && (dx===0 || dx===4) && dz===2;
+      if ((wall || roof) && !door && !window_) world[vidx(hx+dx, floor+dy, hz+dz)] = TNT;
+    }
+  }
 }
 
 // ------------------------------------------------------------- texture -----
