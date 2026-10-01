@@ -100,6 +100,7 @@
       <span>Space</span><span>jump</span>
       <span>1-9 / scroll</span><span>pick block</span>
       <span>Space x2 / F</span><span>fly (again = you drop)</span>
+      <span>Hit a villager</span><span>a gift... or BOOM</span>
       <span>Esc</span><span>pause</span>
     </div>
     <button class="btn" id="startBtn">CLICK TO PLAY</button>
@@ -251,10 +252,13 @@ function generateWorld(){
 // ------------------------------------------------------------ TNT village --
 // a little village where every house is made of TNT. what could go wrong?
 const VILLAGE = [ [40,54], [48,58], [32,58], [44,66], [36,66] ];
+const villageHomes = [];
 function buildTntVillage(){
+  villageHomes.length = 0;
   for (const [hx,hz] of VILLAGE){
     let floor = 0;
     for (let dx=-1;dx<=5;dx++) for (let dz=-1;dz<=5;dz++) floor = Math.max(floor, surfaceY(hx+dx,hz+dz));
+    villageHomes.push({ x:hx, z:hz, floor });
     for (let dx=-1;dx<=5;dx++) for (let dz=-1;dz<=5;dz++){
       const x=hx+dx, z=hz+dz;
       for (let y=1;y<floor;y++) if (world[vidx(x,y,z)] === AIR) world[vidx(x,y,z)] = DIRT;
@@ -363,6 +367,18 @@ function buildAtlas(){
   rect(16, 0, 22, TILE, 1, "rgb(255,200,40)");
   g.fillStyle = "rgb(255,200,40)"; g.font = "bold 9px monospace";
   g.fillText("GIANT", 0*TILE+16, 4*TILE+19);
+  // 17 villager face: one big eyebrow, green eyes
+  noisy(17, 182,132,100, 14);
+  rect(17, 4, 9, 24, 3, "rgb(70,44,30)");
+  rect(17, 6, 13, 6, 4, "rgb(245,245,240)"); rect(17, 20, 13, 6, 4, "rgb(245,245,240)");
+  rect(17, 9, 13, 3, 4, "rgb(40,140,60)");   rect(17, 20, 13, 3, 4, "rgb(40,140,60)");
+  rect(17, 13, 12, 6, 12, "rgb(160,112,84)");
+  rect(17, 11, 26, 10, 2, "rgb(110,70,52)");
+  // 18 villager skin, 19 pants, 20 sleeves, 21 fuse
+  noisy(18, 182,132,100, 14);
+  noisy(19, 74,60,52, 20);
+  noisy(20, 160,38,32, 22);
+  noisy(21, 210,205,190, 30);
   return c;
 }
 
@@ -405,14 +421,14 @@ const terrainProg = program(`
   precision mediump float;
   uniform sampler2D uTex;
   uniform vec3 uFogColor;
-  uniform vec3 uTint;
+  uniform float uFlash;
   varying vec2 vUV;
   varying float vLight;
   varying float vDist;
   void main(){
     vec4 t = texture2D(uTex, vUV);
     vec3 c = t.rgb * vLight;
-    c = mix(c, uTint, 0.0);
+    c = mix(c, vec3(1.0), uFlash);
     float fog = clamp((vDist - 42.0) / 34.0, 0.0, 1.0);
     gl_FragColor = vec4(mix(c, uFogColor, fog), 1.0);
   }`);
@@ -450,6 +466,7 @@ const TL = {
   uEye: gl.getUniformLocation(terrainProg,"uEye"),
   uTex: gl.getUniformLocation(terrainProg,"uTex"),
   uFog: gl.getUniformLocation(terrainProg,"uFogColor"),
+  uFlash: gl.getUniformLocation(terrainProg,"uFlash"),
 };
 const PL = {
   aPos: gl.getAttribLocation(partProg,"aPos"),
@@ -633,6 +650,33 @@ function blip(freq, dur, type, vol){
 function sfxDig(){ blip(140 + Math.random()*60, 0.10, "square", 0.08); }
 function sfxPlace(){ blip(320 + Math.random()*80, 0.07, "triangle", 0.10); }
 function sfxHurt(){ blip(180, 0.22, "sawtooth", 0.16); }
+function sfxHrmm(dist){
+  if (!actx) return;
+  const vol = 0.09 * (1 - dist/14);
+  if (vol <= 0.005) return;
+  const t = actx.currentTime, f = 150 + Math.random()*60;
+  const o = actx.createOscillator(), lp = actx.createBiquadFilter(), g = actx.createGain();
+  o.type = "sawtooth";
+  o.frequency.setValueAtTime(f, t);
+  o.frequency.linearRampToValueAtTime(f*1.25, t+0.12);
+  o.frequency.linearRampToValueAtTime(f*0.8, t+0.32);
+  lp.type = "lowpass"; lp.frequency.value = 900;
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(vol, t+0.04);
+  g.gain.exponentialRampToValueAtTime(0.001, t+0.36);
+  o.connect(lp); lp.connect(g); g.connect(actx.destination); o.start(t); o.stop(t+0.4);
+}
+function sfxHiss(dur){
+  if (!actx) return;
+  const n = (actx.sampleRate*dur)|0, buf = actx.createBuffer(1, n, actx.sampleRate), d = buf.getChannelData(0);
+  for (let i=0;i<n;i++) d[i] = Math.random()*2-1;
+  const src = actx.createBufferSource(); src.buffer = buf;
+  const hp = actx.createBiquadFilter(); hp.type = "highpass"; hp.frequency.value = 2600;
+  const g = actx.createGain(), t = actx.currentTime;
+  g.gain.setValueAtTime(0.03, t);
+  g.gain.linearRampToValueAtTime(0.16, t+dur);
+  src.connect(hp); hp.connect(g); g.connect(actx.destination); src.start();
+}
 function sfxJackpot(){ [660,880,1320].forEach((f,i)=> setTimeout(()=>blip(f,0.14,"triangle",0.12), i*70)); }
 
 // ------------------------------------------------------------- player -----
@@ -668,17 +712,20 @@ function respawn(){
   player.y = surfaceY(sx,sz) + 0.2;
   player.vx = player.vy = player.vz = 0;
   player.hp = 20; player.dead = false; player.fly = false;
+  player.yaw = Math.PI;   // look toward the TNT village
+  spawnVillagers();
   updateHUD();
 }
 
-function playerBoxCollides(px,py,pz){
-  const x0=Math.floor(px-PW), x1=Math.floor(px+PW);
-  const y0=Math.floor(py), y1=Math.floor(py+PH-0.001);
-  const z0=Math.floor(pz-PW), z1=Math.floor(pz+PW);
+function boxCollides(px,py,pz, hw,h){
+  const x0=Math.floor(px-hw), x1=Math.floor(px+hw);
+  const y0=Math.floor(py), y1=Math.floor(py+h-0.001);
+  const z0=Math.floor(pz-hw), z1=Math.floor(pz+hw);
   for (let x=x0;x<=x1;x++) for (let y=y0;y<=y1;y++) for (let z=z0;z<=z1;z++)
     if (isBlocking(x,y,z)) return true;
   return false;
 }
+function playerBoxCollides(px,py,pz){ return boxCollides(px,py,pz, PW,PH); }
 
 function movePlayer(dx,dy,dz){
   // axis by axis, so sliding along walls feels right
@@ -758,7 +805,7 @@ function blockParticles(x,y,z, b, count, force){
 let shake = 0;
 const pendingBooms = [];
 
-function explode(cx, cy, cz, power){
+function explode(cx, cy, cz, power, reason){
   const R = power;
   sfxBoom(Math.hypot(player.x-cx, player.y-cy, player.z-cz));
   // fireball
@@ -790,6 +837,13 @@ function explode(cx, cy, cz, power){
     if (b === MEGA) endTheWorld();
     if (b === TNT) pendingBooms.push({ x, y, z, power:R, t: 0.12 + Math.random()*0.25 });
   }
+  // villagers are made of TNT too
+  for (const v of villagers){
+    if (Math.hypot(v.x-cx-0.5, v.y+1-cy-0.5, v.z-cz-0.5) < R*1.6){
+      const f = 0.15 + Math.random()*0.3;
+      v.fuse = v.fuse > 0 ? Math.min(v.fuse, f) : f;
+    }
+  }
 
   const px = player.x, py = player.y+EYE*0.5, pz = player.z;
   const pd = Math.hypot(px-cx-0.5, py-cy-0.5, pz-cz-0.5);
@@ -804,7 +858,7 @@ function explode(cx, cy, cz, power){
     player.vz = Math.max(-42, Math.min(42, player.vz));
     player.vy = Math.max(-55, Math.min(32, player.vy));
     player.onGround = false;
-    damage(Math.round(f*f*16 + 1), "Blown to bits by a block you were only trying to mine.");
+    damage(Math.round(f*f*16 + 1), reason || "Blown to bits by a block you were only trying to mine.");
     shake = Math.max(shake, f*0.9);
     boomFlash(f);
   } else {
@@ -829,6 +883,7 @@ function endTheWorld(){
   // everything goes except bedrock
   for (let i=0;i<world.length;i++) if (world[i] !== BEDROCK) world[i] = AIR;
   pendingBooms.length = 0;
+  villagers.length = 0;
   for (const c of chunks) c.dirty = true;
   player.fly = false;
   setTimeout(()=>{
@@ -857,7 +912,7 @@ function raycast(maxD){
   ];
   let nx=0, ny=0, nz=0, t=0;
   for (let i=0;i<160;i++){
-    if (getBlock(x,y,z) !== AIR) return { x,y,z, nx,ny,nz };
+    if (getBlock(x,y,z) !== AIR) return { x,y,z, nx,ny,nz, t };
     if (tMax[0] < tMax[1] && tMax[0] < tMax[2]) { t=tMax[0]; x+=step[0]; tMax[0]+=tDelta[0]; nx=-step[0]; ny=0; nz=0; }
     else if (tMax[1] < tMax[2])                 { t=tMax[1]; y+=step[1]; tMax[1]+=tDelta[1]; nx=0; ny=-step[1]; nz=0; }
     else                                        { t=tMax[2]; z+=step[2]; tMax[2]+=tDelta[2]; nx=0; ny=0; nz=-step[2]; }
@@ -873,6 +928,8 @@ const BOOM_LINES  = ["BOOM!", "KABOOM!", "THAT ONE WAS A BOMB", "OOPS", "50/50 S
 
 function mine(){
   const hit = raycast(6);
+  const vh = villagerRay(6);
+  if (vh && (!hit || vh.t < hit.t)){ hitVillager(vh.v); return; }
   if (!hit) return;
   const b = getBlock(hit.x, hit.y, hit.z);
   if (b === AIR) return;
@@ -919,6 +976,7 @@ function place(){
   const x = hit.x + hit.nx, y = hit.y + hit.ny, z = hit.z + hit.nz;
   if (x<0||x>=WX||y<0||y>=WY||z<0||z>=WZ) return;
   if (getBlock(x,y,z) !== AIR) return;
+  if (villagerInBlock(x,y,z)) return;
   // don't seal yourself inside a block
   const oldB = AIR;
   world[vidx(x,y,z)] = type;
@@ -927,6 +985,191 @@ function place(){
   inventory[type]--;
   sfxPlace();
   updateHUD();
+}
+
+// ------------------------------------------------------------- villagers --
+// TNT villagers: a TNT robe, a fuse on their head. Hit one and flip a coin:
+// it gives you a TNT... or it starts hissing.
+const villagers = [];
+const VW = 0.3, VH = 1.9;     // half width, height
+
+function spawnVillagers(){
+  villagers.length = 0;
+  for (const h of villageHomes){
+    for (const dx of [1.5, 3.5]){          // two outside each front door
+      const x = h.x + dx, z = h.z - 0.5;
+      villagers.push({ x, y: surfaceY(Math.floor(x), Math.floor(z)), z, vy:0, kx:0, kz:0,
+        yaw: Math.random()*Math.PI*2, home:h, tx:x, tz:z, wait: Math.random()*3, walk:0,
+        fuse:0, talk: 2 + Math.random()*10, onGround:false, phase:0, stride:0, bumps:0 });
+    }
+  }
+}
+function pickVillagerTarget(v){
+  v.tx = Math.max(1, Math.min(WX-1, v.home.x + 2.5 + (Math.random()-0.5)*16));
+  v.tz = Math.max(1, Math.min(WZ-1, v.home.z + 2.5 + (Math.random()-0.5)*16));
+  v.walk = 6; v.bumps = 0;
+}
+function villagerScale(v){ return v.fuse > 0 ? 1 + (1 - Math.min(1, v.fuse/1.5))*0.12 : 1; }
+function villagerFlash(v){ return v.fuse > 0 && Math.floor(v.fuse * (v.fuse < 0.6 ? 20 : 8)) % 2 === 0 ? 0.7 : 0; }
+
+function updateVillagers(dt){
+  for (let i=villagers.length-1; i>=0; i--){
+    const v = villagers[i];
+    if (v.fuse > 0){
+      v.fuse -= dt;
+      if (Math.random() < 0.7) spawnParticle(v.x, v.y + 2.06*villagerScale(v), v.z,
+        (Math.random()-0.5)*2, 2+Math.random()*2, (Math.random()-0.5)*2,
+        1, 0.7+Math.random()*0.3, 0.2, 3+Math.random()*3, 0.25+Math.random()*0.25);
+      if (v.fuse <= 0){
+        villagers.splice(i,1);
+        explode(Math.floor(v.x), Math.floor(v.y+0.9), Math.floor(v.z), 3.2, "A TNT villager blew up right next to you.");
+        continue;
+      }
+    }
+    const pdx = player.x - v.x, pdz = player.z - v.z;
+    let wx = 0, wz = 0, faceYaw = null;
+    if (v.fuse > 0){
+      // frozen in place, hissing
+    } else if (v.wait > 0){
+      v.wait -= dt;
+      if (Math.hypot(pdx, pdz) < 5) faceYaw = Math.atan2(-pdx, -pdz);   // stare at you
+      if (v.wait <= 0) pickVillagerTarget(v);
+    } else {
+      const dx = v.tx - v.x, dz = v.tz - v.z, d = Math.hypot(dx, dz);
+      v.walk -= dt;
+      if (d < 0.35 || v.walk <= 0) v.wait = 1 + Math.random()*4;
+      else { wx = dx/d; wz = dz/d; faceYaw = Math.atan2(-dx, -dz); }
+    }
+    if (faceYaw !== null){
+      const turn = Math.atan2(Math.sin(faceYaw - v.yaw), Math.cos(faceYaw - v.yaw));
+      v.yaw += turn * Math.min(1, dt*7);
+    }
+
+    const ox = v.x, oz = v.z;
+    const mx = (wx*1.5 + v.kx)*dt, mz = (wz*1.5 + v.kz)*dt;
+    v.kx *= Math.max(0, 1 - dt*5); v.kz *= Math.max(0, 1 - dt*5);
+    let blocked = false;
+    if (mx){ if (!boxCollides(v.x+mx, v.y, v.z, VW, VH)) v.x += mx; else blocked = true; }
+    if (mz){ if (!boxCollides(v.x, v.y, v.z+mz, VW, VH)) v.z += mz; else blocked = true; }
+    if (blocked && v.onGround && (wx || wz)){
+      if (++v.bumps > 2) v.walk = 0;   // a wall. give up and stand around
+      else v.vy = 8.4;                 // hop up one block
+    } else if (!blocked && v.onGround) v.bumps = 0;
+    v.vy = Math.max(-40, v.vy - 28*dt);
+    const ny = v.y + v.vy*dt;
+    if (!boxCollides(v.x, ny, v.z, VW, VH)){ v.y = ny; v.onGround = false; }
+    else { if (v.vy < 0){ v.onGround = true; v.y = Math.floor(ny) + 1; } v.vy = 0; }
+
+    const moved = Math.hypot(v.x-ox, v.z-oz);
+    v.phase += moved * 5;
+    v.stride += ((moved > 0.001 ? 1 : 0) - v.stride) * Math.min(1, dt*8);
+
+    v.talk -= dt;
+    if (v.talk <= 0){ v.talk = 4 + Math.random()*8; sfxHrmm(Math.hypot(pdx, player.y - v.y, pdz)); }
+    if (v.y < -6) villagers.splice(i,1);
+  }
+}
+
+// the villager you are looking at, if it is closer than maxD
+function villagerRay(maxD){
+  const o = [player.x, player.y+EYE, player.z], d = camDir();
+  let best = null, bestT = maxD;
+  for (const v of villagers){
+    const lo = [v.x-VW, v.y, v.z-VW], hi = [v.x+VW, v.y+VH, v.z+VW];
+    let t0 = 0, t1 = bestT, ok = true;
+    for (let a=0; a<3 && ok; a++){
+      if (Math.abs(d[a]) < 1e-9){ ok = o[a] >= lo[a] && o[a] <= hi[a]; continue; }
+      let ta = (lo[a]-o[a])/d[a], tb = (hi[a]-o[a])/d[a];
+      if (ta > tb){ const s = ta; ta = tb; tb = s; }
+      t0 = Math.max(t0, ta); t1 = Math.min(t1, tb);
+      if (t0 > t1) ok = false;
+    }
+    if (ok){ best = v; bestT = t0; }
+  }
+  return best ? { v:best, t:bestT } : null;
+}
+function villagerInBlock(x,y,z){
+  return villagers.some(v => v.x+VW > x && v.x-VW < x+1 && v.y+VH > y && v.y < y+1 && v.z+VW > z && v.z-VW < z+1);
+}
+
+function hitVillager(v){
+  if (v.fuse > 0) return;               // already hissing. RUN.
+  const dx = v.x - player.x, dz = v.z - player.z, d = Math.hypot(dx, dz) || 1;
+  v.kx = dx/d*4; v.kz = dz/d*4;
+  if (v.onGround) v.vy = 5;
+  if (Math.random() < BOOM_CHANCE){
+    v.fuse = 1.5;
+    sfxHiss(1.5);
+    toast("the villager is HISSING... RUN!", "#ff8a3d");
+  } else {
+    inventory[TNT] = (inventory[TNT]||0) + 1;
+    sfxHrmm(0);
+    toast("hrmm! a villager gave you 1 TNT", "#ffe08a");
+    updateHUD();
+  }
+}
+
+// each villager is 7 boxes: 2 legs, robe, crossed arms, head, nose, fuse
+const LEG_T  = [19,19,19,19,19,19], ROBE_T = [15,15,15,15,15,15], ARM_T = [20,20,20,20,20,20];
+const HEAD_T = [18,18,18,18,18,17], NOSE_T = [18,18,18,18,18,18], FUSE_T = [21,21,21,21,21,21];
+const VILLAGER_VERTS = 7*36;
+const villagerVBO = gl.createBuffer();
+let villagerData = new Float32Array(VILLAGER_VERTS*6*10);
+
+// one box, in the villager's own space (feet at 0, face toward -z), swung
+// around pivotY (for legs), then turned by its yaw and moved into the world
+function pushBox(out, k, v, s, cx,cy,cz, hx,hy,hz, tiles, pivotY, swing){
+  const cosY = Math.cos(v.yaw), sinY = Math.sin(v.yaw), cs = Math.cos(swing), ss = Math.sin(swing);
+  for (let fi=0; fi<6; fi++){
+    const F = FACES[fi], n = F.n, u = F.u, w = F.v;
+    const t = tiles[fi], tx = (t%4)/4, ty = Math.floor(t/4)/ROWS;
+    const wnz = -n[0]*sinY + n[2]*cosY;
+    const light = n[1] > 0 ? 1.0 : n[1] < 0 ? 0.52 : 0.78 + 0.12*Math.abs(wnz);
+    for (const c of [0,1,2, 0,2,3]){
+      const du = CORNERS[c][0], dv = CORNERS[c][1];
+      let px = cx + hx*(n[0] + u[0]*du + w[0]*dv);
+      let py = cy + hy*(n[1] + u[1]*du + w[1]*dv);
+      let pz = cz + hz*(n[2] + u[2]*du + w[2]*dv);
+      if (swing){ const yy = py - pivotY; py = pivotY + yy*cs - pz*ss; pz = yy*ss + pz*cs; }
+      px *= s; py *= s; pz *= s;
+      out[k++] = v.x + px*cosY + pz*sinY;
+      out[k++] = v.y + py;
+      out[k++] = v.z - px*sinY + pz*cosY;
+      out[k++] = tx + (du > 0 ? 0.25-EPS : EPS);
+      out[k++] = ty + (dv > 0 ? EPS : 1/ROWS-EPS);
+      out[k++] = light;
+    }
+  }
+  return k;
+}
+function buildVillager(out, k, v){
+  const s = villagerScale(v), sw = Math.sin(v.phase)*0.6*v.stride;
+  k = pushBox(out,k,v,s, -0.12,0.3,0,     0.11,0.3,0.11,  LEG_T, 0.6,  sw);
+  k = pushBox(out,k,v,s,  0.12,0.3,0,     0.11,0.3,0.11,  LEG_T, 0.6, -sw);
+  k = pushBox(out,k,v,s,  0,1.0,0,        0.3,0.4,0.18,   ROBE_T, 0,0);
+  k = pushBox(out,k,v,s,  0,1.12,-0.25,   0.32,0.1,0.08,  ARM_T, 0,0);
+  k = pushBox(out,k,v,s,  0,1.65,0,       0.25,0.25,0.25, HEAD_T, 0,0);
+  k = pushBox(out,k,v,s,  0,1.53,-0.29,   0.05,0.1,0.04,  NOSE_T, 0,0);
+  k = pushBox(out,k,v,s,  0,1.98,0,       0.03,0.08,0.03, FUSE_T, 0,0);
+  return k;
+}
+// drawn with the terrain shader, which is already set up when this runs
+function drawVillagers(){
+  if (!villagers.length) return;
+  const need = villagers.length * VILLAGER_VERTS * 6;
+  if (villagerData.length < need) villagerData = new Float32Array(need);
+  let k = 0;
+  for (const v of villagers) k = buildVillager(villagerData, k, v);
+  gl.bindBuffer(gl.ARRAY_BUFFER, villagerVBO);
+  gl.bufferData(gl.ARRAY_BUFFER, villagerData.subarray(0, k), gl.DYNAMIC_DRAW);
+  gl.vertexAttribPointer(TL.aPos,   3, gl.FLOAT, false, 24, 0);
+  gl.vertexAttribPointer(TL.aUV,    2, gl.FLOAT, false, 24, 12);
+  gl.vertexAttribPointer(TL.aLight, 1, gl.FLOAT, false, 24, 20);
+  villagers.forEach((v, i) => {
+    gl.uniform1f(TL.uFlash, villagerFlash(v));
+    gl.drawArrays(gl.TRIANGLES, i*VILLAGER_VERTS, VILLAGER_VERTS);
+  });
+  gl.uniform1f(TL.uFlash, 0);
 }
 
 // ------------------------------------------------------------- hud --------
@@ -1136,6 +1379,7 @@ function update(dt){
   updateParticles(dt);
   shake = Math.max(0, shake - dt*2.2);
   if (paused || player.dead) return;
+  updateVillagers(dt);
 
   const speed = (keys.ShiftLeft||keys.ShiftRight ? 9.5 : 5.2) * (player.fly ? 2.2 : 1);
   let fx=0, fz=0;
@@ -1220,6 +1464,7 @@ function render(){
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, tex);
   gl.uniform1i(TL.uTex, 0);
+  gl.uniform1f(TL.uFlash, 0);
   gl.enableVertexAttribArray(TL.aPos);
   gl.enableVertexAttribArray(TL.aUV);
   gl.enableVertexAttribArray(TL.aLight);
@@ -1232,12 +1477,15 @@ function render(){
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, c.ibo);
     gl.drawElements(gl.TRIANGLES, c.count, IDX_TYPE, 0);
   }
+  drawVillagers();
   gl.disableVertexAttribArray(TL.aUV);
   gl.disableVertexAttribArray(TL.aLight);
 
   // --- targeted block outline
-  const hit = paused ? null : raycast(6);
-  elCross.classList.toggle("hot", !!hit);
+  let hit = paused ? null : raycast(6);
+  const vh = paused ? null : villagerRay(6);
+  if (vh && (!hit || vh.t < hit.t)) hit = null;   // a villager is in the way
+  elCross.classList.toggle("hot", !!hit || !!vh);
   if (hit){
     let k = 0;
     for (const e of BOX_EDGES){
